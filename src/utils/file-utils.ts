@@ -1,3 +1,5 @@
+// src/utils/file-utils.ts - Complete improved version for large projects
+
 import fs from "fs";
 import path from "path";
 import * as glob from "glob";
@@ -12,6 +14,7 @@ import {
   FileStat,
   PrioritizedResult,
   ScoredFile,
+  FileTypeInfo,
 } from "../types";
 
 // High value files that should be prioritized
@@ -40,6 +43,20 @@ export const HIGH_PRIORITY_FILES: string[] = [
   "pom.xml",
   "app.config.ts",
   "project.config.json",
+  // Language-specific main config files
+  "settings.gradle",
+  "build.sbt",
+  "mix.exs",
+  "CMakeLists.txt",
+  "meson.build",
+  "deno.json",
+  "angular.json",
+  "nuxt.config.js",
+  "svelte.config.js",
+  "gatsby-config.js",
+  "astro.config.mjs",
+  "tailwind.config.js",
+  "postcss.config.js",
 ];
 
 // Entry point files that should be prioritized
@@ -59,10 +76,190 @@ export const ENTRY_POINT_PATTERNS: string[] = [
   "src/index.*",
   "src/main.*",
   "src/app.*",
+  // More entry points
+  "cmd/main.go",
+  "cmd/*/main.go",
+  "main.go",
+  "Program.cs",
+  "Main.java",
+  "Application.java",
+  "app.rb",
+  "main.rs",
+  "lib.rs",
+  "mod.rs",
+];
+
+// Folders that likely contain important code
+export const IMPORTANT_FOLDERS: string[] = [
+  "src/",
+  "app/",
+  "lib/",
+  "core/",
+  "api/",
+  "controllers/",
+  "models/",
+  "services/",
+  "utils/",
+  "helpers/",
+  "components/",
+  "hooks/",
+  "store/",
+  "context/",
+  "reducers/",
+  "actions/",
+  "middleware/",
+  "providers/",
+];
+
+// Binary file extensions to skip
+export const BINARY_EXTENSIONS: string[] = [
+  // Images
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".bmp",
+  ".tiff",
+  ".ico",
+  ".svg",
+  ".webp",
+
+  // Audio
+  ".mp3",
+  ".wav",
+  ".ogg",
+  ".flac",
+  ".aac",
+  ".m4a",
+
+  // Video
+  ".mp4",
+  ".webm",
+  ".avi",
+  ".mov",
+  ".wmv",
+  ".flv",
+  ".mkv",
+
+  // Compiled
+  ".dll",
+  ".so",
+  ".dylib",
+  ".a",
+  ".lib",
+  ".obj",
+  ".o",
+  ".class",
+  ".pyc",
+  ".pyo",
+
+  // Compressed
+  ".zip",
+  ".tar",
+  ".gz",
+  ".7z",
+  ".rar",
+  ".bz2",
+  ".xz",
+
+  // Documents
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".ppt",
+  ".pptx",
+
+  // Database/data files
+  ".db",
+  ".sqlite",
+  ".sqlite3",
+  ".mdb",
+  ".csv",
+  ".tsv",
+  ".dat",
+  ".bin",
+
+  // Font files
+  ".ttf",
+  ".otf",
+  ".woff",
+  ".woff2",
+  ".eot",
+
+  // Other binary formats
+  ".exe",
+  ".dmg",
+  ".iso",
+  ".img",
+
+  // Large text formats that aren't useful for context
+  ".map",
+  ".min.js",
+  ".min.css",
 ];
 
 /**
- * Find files that match the given options
+ * Check if a file is likely a binary file based on extension
+ * @param filePath The path to the file
+ * @returns Boolean indicating if the file is likely binary
+ */
+export function isLikelyBinaryFile(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return BINARY_EXTENSIONS.includes(ext);
+}
+
+/**
+ * Get detailed file type information
+ * @param filePath The path to the file
+ * @param fileSize The size of the file in bytes
+ * @returns Object with file type information
+ */
+export function getFileTypeInfo(
+  filePath: string,
+  fileSize: number
+): FileTypeInfo {
+  const basename = path.basename(filePath);
+  const ext = path.extname(filePath).toLowerCase();
+
+  // Check if it's a binary file
+  const isBinary = isLikelyBinaryFile(filePath);
+
+  // Check if it's a large file (> 500KB by default)
+  const isLarge = fileSize > 500 * 1024;
+
+  // Check if it's a config file
+  const isConfig =
+    HIGH_PRIORITY_FILES.includes(basename) ||
+    HIGH_PRIORITY_FILES.some((pattern) => minimatch(basename, pattern));
+
+  // Check if it's an entry point
+  const isEntry = ENTRY_POINT_PATTERNS.some((pattern) =>
+    minimatch(filePath, pattern)
+  );
+
+  // Check if it's in a priority folder
+  const isPriority =
+    IMPORTANT_FOLDERS.some((folder) => filePath.startsWith(folder)) ||
+    isConfig ||
+    isEntry;
+
+  // Estimate tokens (roughly 4 characters per token)
+  const estimatedTokens = Math.ceil(fileSize / 4);
+
+  return {
+    isBinary,
+    isLarge,
+    isConfig,
+    isPriority,
+    isEntry,
+    estimatedTokens,
+  };
+}
+
+/**
+ * Find files that match the given options with improved performance for large projects
  * @param options Program options
  * @param defaults Default patterns
  * @returns Promise resolving to an array of file paths
@@ -91,15 +288,6 @@ async function findFiles(
     // Get files to exclude
     const excludeFiles = options.exclude || defaults.DEFAULT_EXCLUDE_FILES;
 
-    // Check if we should only include recently modified files
-    let recentFilter: number | null = null;
-    if (options.recent && parseInt(options.recent) > 0) {
-      const days = parseInt(options.recent);
-      const cutoffTime = new Date();
-      cutoffTime.setDate(cutoffTime.getDate() - days);
-      recentFilter = cutoffTime.getTime();
-    }
-
     // Use gitignore if present and option is enabled
     let ig = ignore();
     if (options.respectGitignore) {
@@ -114,68 +302,163 @@ async function findFiles(
       }
     }
 
-    // Get all files
-    const allFiles = glob.sync("**/*", {
+    // Performance optimization: limit maximum directory depth to prevent excessive recursion
+    const maxDepth = 10; // Reasonable depth for most projects
+
+    // Get all files with depth limit
+    const globOptions = {
       cwd: rootDir,
       nodir: true,
       dot: true,
       ignore: ignoreList,
-    });
+      depth: maxDepth, // Add depth limit
+      follow: false, // Don't follow symlinks
+      stats: false, // Don't need stats yet
+    };
+
+    // Use glob pattern with limited depth
+    const allFiles = glob.sync("**/*", globOptions);
+
+    // Check if we should only include recently modified files
+    let recentFilter: number | null = null;
+    if (options.recent && parseInt(options.recent) > 0) {
+      const days = parseInt(options.recent);
+      const cutoffTime = new Date();
+      cutoffTime.setDate(cutoffTime.getDate() - days);
+      recentFilter = cutoffTime.getTime();
+    }
+
+    // Create sets for faster lookups
+    const extensionsSet = new Set(extensions);
+    const includeFilesSet = new Set(includeFiles);
+    const excludeFilesSet = new Set(excludeFiles);
 
     // Filter files based on extensions, include files, and exclude files
-    const filteredFiles = allFiles.filter((file) => {
-      const ext = path.extname(file);
-      const basename = path.basename(file);
-      const fullPath = path.join(rootDir, file);
+    // Use batch processing to handle large arrays efficiently
+    const BATCH_SIZE = 1000;
+    let filteredFiles: string[] = [];
 
-      // Skip if explicitly excluded
-      if (excludeFiles.includes(basename)) {
-        return false;
-      }
+    for (let i = 0; i < allFiles.length; i += BATCH_SIZE) {
+      const batch = allFiles.slice(i, i + BATCH_SIZE);
 
-      // Include if it's in the include files list
-      if (includeFiles.includes(basename)) {
-        // Still check recent filter if enabled
-        if (recentFilter) {
-          try {
-            const stats = fs.statSync(fullPath);
-            return stats.mtimeMs >= recentFilter;
-          } catch (e) {
-            return false;
-          }
-        }
-        return true;
-      }
+      const batchResults = batch.filter((file) => {
+        const ext = path.extname(file);
+        const basename = path.basename(file);
 
-      // Include if the extension is in the list
-      if (extensions.includes(ext)) {
-        // Check against gitignore if enabled
-        if (options.respectGitignore && ig.ignores(file)) {
+        // Skip if explicitly excluded
+        if (excludeFilesSet.has(basename)) {
           return false;
         }
 
-        // Check recent filter if enabled
-        if (recentFilter) {
-          try {
-            const stats = fs.statSync(fullPath);
-            return stats.mtimeMs >= recentFilter;
-          } catch (e) {
+        // Skip if matches a wildcard exclude pattern
+        if (
+          excludeFiles.some((pattern) => {
+            if (pattern.includes("*")) {
+              return minimatch(basename, pattern);
+            }
             return false;
+          })
+        ) {
+          return false;
+        }
+
+        // Include if it's in the include files list
+        if (includeFilesSet.has(basename)) {
+          if (recentFilter) {
+            try {
+              const fullPath = path.join(rootDir, file);
+              const stats = fs.statSync(fullPath);
+              return stats.mtimeMs >= recentFilter;
+            } catch (e) {
+              return false;
+            }
+          }
+          return true;
+        }
+
+        // Check for priority files and special patterns
+        for (const pattern of HIGH_PRIORITY_FILES) {
+          if (minimatch(basename, pattern)) {
+            return true;
           }
         }
 
-        return true;
-      }
+        for (const pattern of ENTRY_POINT_PATTERNS) {
+          if (minimatch(file, pattern)) {
+            return true;
+          }
+        }
 
-      return false;
-    });
+        // Check for important folders
+        for (const folder of IMPORTANT_FOLDERS) {
+          if (file.startsWith(folder)) {
+            // Still check extension for these
+            if (extensionsSet.has(ext)) {
+              return true;
+            }
+          }
+        }
+
+        // Include if the extension is in the list
+        if (extensionsSet.has(ext)) {
+          // Check against gitignore if enabled
+          if (options.respectGitignore && ig.ignores(file)) {
+            return false;
+          }
+
+          // Check recent filter if enabled
+          if (recentFilter) {
+            try {
+              const fullPath = path.join(rootDir, file);
+              const stats = fs.statSync(fullPath);
+              return stats.mtimeMs >= recentFilter;
+            } catch (e) {
+              return false;
+            }
+          }
+
+          return true;
+        }
+
+        return false;
+      });
+
+      filteredFiles.push(...batchResults);
+    }
+
+    // Add a sanity check for maximum number of files
+    const MAX_FILES_TO_PROCESS = options.maxFiles || 1000;
+    if (filteredFiles.length > MAX_FILES_TO_PROCESS) {
+      // If we have too many files, prioritize
+      spinner.info(
+        `Found ${filteredFiles.length} files, limiting to ${MAX_FILES_TO_PROCESS}`
+      );
+
+      // First, keep all high-priority files
+      const highPriorityMatches = filteredFiles.filter((file) => {
+        const basename = path.basename(file);
+        return (
+          HIGH_PRIORITY_FILES.includes(basename) ||
+          ENTRY_POINT_PATTERNS.some((pattern) => minimatch(file, pattern))
+        );
+      });
+
+      // Then add regular files up to the limit
+      const remainingFiles = filteredFiles
+        .filter((file) => !highPriorityMatches.includes(file))
+        .slice(0, MAX_FILES_TO_PROCESS - highPriorityMatches.length);
+
+      filteredFiles = [...highPriorityMatches, ...remainingFiles];
+    }
 
     spinner.succeed(`Found ${filteredFiles.length} relevant files`);
     return filteredFiles;
   } catch (error) {
     spinner.fail("Error finding files");
     console.error(chalk.red((error as Error).message));
-    process.exit(1);
+
+    // Return empty array instead of exiting to allow the program to continue
+    return [];
   }
 }
 
@@ -186,22 +469,67 @@ async function findFiles(
  */
 function getFileTree(rootDir: string): string {
   try {
-    return execSync("tree --gitignore", { cwd: rootDir, encoding: "utf8" });
+    // Try the tree command first
+    return execSync("tree --gitignore -L 3", {
+      cwd: rootDir,
+      encoding: "utf8",
+    });
   } catch (error) {
     try {
-      // Fallback if tree command is not available
-      return execSync(
-        'find . -type d -not -path "*/\\.*" | sort | sed -e "s/[^-][^\\/]*\\//  |/g" -e "s/|\\([^ ]\\)/|-\\1/"',
-        { cwd: rootDir, encoding: "utf8" }
-      );
+      // Fallback if tree command is not available - try a more compatible version
+      return execSync("tree -L 3", { cwd: rootDir, encoding: "utf8" });
     } catch (innerError) {
-      return "Note: Could not generate file tree (tree command not available)";
+      try {
+        // Another fallback using find
+        return execSync(
+          'find . -type d -not -path "*/\\.*" | sort | sed -e "s/[^-][^\\/]*\\//  |/g" -e "s/|\\([^ ]\\)/|-\\1/"',
+          { cwd: rootDir, encoding: "utf8" }
+        );
+      } catch (finalError) {
+        // Manual fallback - create a simple representation
+        let result = "Project Directory Structure:\n";
+        result += rootDir + "\n";
+
+        try {
+          // Get top-level directories
+          const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+          const dirs = entries.filter((entry) => entry.isDirectory());
+          dirs.forEach((dir) => {
+            if (dir.name.startsWith(".")) return; // Skip hidden dirs
+            result += `  |- ${dir.name}/\n`;
+
+            // Try to get second-level directories
+            try {
+              const subEntries = fs.readdirSync(path.join(rootDir, dir.name), {
+                withFileTypes: true,
+              });
+              const subDirs = subEntries.filter((entry) => entry.isDirectory());
+              subDirs.slice(0, 5).forEach((subDir) => {
+                // Limit to 5 subdirectories
+                if (subDir.name.startsWith(".")) return; // Skip hidden dirs
+                result += `  |   |- ${subDir.name}/\n`;
+              });
+              if (subDirs.length > 5) {
+                result += `  |   |- ... ${
+                  subDirs.length - 5
+                } more directories\n`;
+              }
+            } catch (e) {
+              // Ignore errors reading subdirectories
+            }
+          });
+        } catch (e) {
+          // Ignore errors
+        }
+
+        return result;
+      }
     }
   }
 }
 
 /**
- * Prioritize files based on importance
+ * Prioritize files based on importance with improved algorithm for large projects
  * @param files Array of file paths
  * @param fileContents Array of file contents
  * @param fileStats Array of file statistics
@@ -214,38 +542,138 @@ function prioritizeFiles(
   fileStats: FileStat[],
   options: ProgramOptions
 ): PrioritizedResult {
+  // Safety check for array length mismatches
+  if (
+    files.length !== fileContents.length ||
+    files.length !== fileStats.length
+  ) {
+    console.warn(
+      chalk.yellow(
+        `Warning: Mismatch in array lengths - files: ${files.length}, contents: ${fileContents.length}, stats: ${fileStats.length}`
+      )
+    );
+
+    // Truncate to the shortest length
+    const minLength = Math.min(
+      files.length,
+      fileContents.length,
+      fileStats.length
+    );
+    files = files.slice(0, minLength);
+    fileContents = fileContents.slice(0, minLength);
+    fileStats = fileStats.slice(0, minLength);
+  }
+
   // Create a score for each file
-  const scoredFiles: ScoredFile[] = files.map((file, index) => {
+  let scoredFiles: ScoredFile[] = files.map((file, index) => {
     const basename = path.basename(file);
-    const content = fileContents[index];
+    const content = fileContents[index] || ""; // Safeguard against undefined
     const stats = fileStats[index];
+    const ext = path.extname(file).toLowerCase();
 
     let score = 0;
 
+    // Prioritize README and setup instructions first
+    if (
+      basename.toLowerCase() === "readme.md" ||
+      basename.toLowerCase() === "contributing.md" ||
+      basename.toLowerCase() === "setup.md"
+    ) {
+      score += 200;
+    }
+
     // Prioritize config files and entry points
-    if (HIGH_PRIORITY_FILES.includes(basename)) {
-      score += 100;
+    if (
+      HIGH_PRIORITY_FILES.includes(basename) ||
+      HIGH_PRIORITY_FILES.some((pattern) => minimatch(basename, pattern))
+    ) {
+      score += 150;
     }
 
     // Prioritize likely entry points
     for (const pattern of ENTRY_POINT_PATTERNS) {
       if (minimatch(file, pattern)) {
-        score += 80;
+        score += 100;
         break;
       }
     }
 
-    // Prioritize files in src/ or app/ directories
-    if (file.startsWith("src/") || file.startsWith("app/")) {
-      score += 40;
+    // Prioritize important directories
+    for (const folder of IMPORTANT_FOLDERS) {
+      if (file.startsWith(folder)) {
+        score += 50;
+        break;
+      }
+    }
+
+    // Give extra points for specific extensions that are likely important
+    const importantExtensions: { [key: string]: number } = {
+      ".md": 30, // Documentation
+      ".json": 25, // Configuration
+      ".yml": 25, // Configuration
+      ".yaml": 25, // Configuration
+      ".js": 20, // JavaScript
+      ".ts": 25, // TypeScript (slightly higher than JS)
+      ".jsx": 20, // React
+      ".tsx": 25, // React with TypeScript
+      ".py": 20, // Python
+      ".go": 20, // Go
+      ".java": 20, // Java
+      ".rb": 20, // Ruby
+    };
+
+    if (importantExtensions[ext]) {
+      score += importantExtensions[ext];
     }
 
     // Prefer smaller files (inverse proportion to size)
-    score += Math.max(0, 30 - Math.floor(stats.size / 1000));
+    const sizeScore = Math.max(0, 50 - Math.floor(stats.size / 1000));
+    score += sizeScore;
 
-    // Prioritize files with imports/requires (likely more connected)
+    // Heavily penalize very large files
+    if (stats.size > 100 * 1024) {
+      // > 100KB
+      score -= 50;
+    }
+
+    // Penalize extremely small files (might be stubs or not informative)
+    if (stats.size < 100) {
+      // < 100 bytes
+      score -= 20;
+    }
+
+    // Bonus points for files with significant but reasonable content
+    if (stats.size > 500 && stats.size < 10 * 1024) {
+      // 500B - 10KB (good size)
+      score += 20;
+    }
+
+    // Prioritize files with imports/requires and definitions (likely more connected)
+    let codeQualityScore = 0;
+
+    // Count imports/requires
     const importCount = (content.match(/import\s+|require\s*\(/g) || []).length;
-    score += Math.min(20, importCount * 2);
+    codeQualityScore += Math.min(20, importCount * 2);
+
+    // Count function definitions
+    const functionCount = (
+      content.match(/function\s+|=>|def\s+|class\s+|interface\s+/g) || []
+    ).length;
+    codeQualityScore += Math.min(20, functionCount);
+
+    // Detect code that's likely to be meaningful architecture
+    if (
+      content.includes("export default") ||
+      content.includes("module.exports") ||
+      content.includes("@Component") ||
+      content.includes("extends React") ||
+      content.includes("createSlice") ||
+      content.includes("@Injectable")
+    ) {
+      codeQualityScore += 15;
+    }
+
+    score += codeQualityScore;
 
     // Prioritize recently modified files if not already filtering by recency
     if (!options.recent) {
@@ -253,12 +681,39 @@ function prioritizeFiles(
         const fullPath = path.join(options.directory, file);
         const fStats = fs.statSync(fullPath);
         const ageInDays = (Date.now() - fStats.mtimeMs) / (1000 * 60 * 60 * 24);
-        if (ageInDays < 7) {
-          score += Math.max(0, 20 - Math.floor(ageInDays * 3));
+        if (ageInDays < 14) {
+          // Increase to 2 weeks
+          score += Math.max(0, 30 - Math.floor(ageInDays * 2));
         }
       } catch (e) {
         // Ignore errors
       }
+    }
+
+    // Deprioritize generated files
+    if (
+      basename.includes(".generated.") ||
+      basename.includes(".gen.") ||
+      file.includes("/generated/") ||
+      file.includes("/dist/") ||
+      file.includes("/build/")
+    ) {
+      score -= 80;
+    }
+
+    // Deprioritize minified files
+    if (basename.includes(".min.")) {
+      score -= 100;
+    }
+
+    // Deprioritize test files
+    if (
+      basename.includes(".test.") ||
+      basename.includes(".spec.") ||
+      file.includes("/__tests__/") ||
+      file.includes("/__mocks__/")
+    ) {
+      score -= 40;
     }
 
     return { file, content, stats, score };
@@ -266,6 +721,44 @@ function prioritizeFiles(
 
   // Sort by score (highest first)
   scoredFiles.sort((a, b) => b.score - a.score);
+
+  // Apply token budget constraints if specified
+  if (options.tokens && options.tokenLimitChars) {
+    let totalChars = 0;
+    const filteredScoredFiles: ScoredFile[] = [];
+
+    // First add the top 10 highest scored files regardless of size
+    // This ensures we always include the most important files
+    const criticalFiles = scoredFiles.slice(0, 10);
+    filteredScoredFiles.push(...criticalFiles);
+    totalChars = criticalFiles.reduce((sum, item) => sum + item.stats.size, 0);
+
+    // Then add more files until we reach the token limit
+    for (let i = 10; i < scoredFiles.length; i++) {
+      const file = scoredFiles[i];
+      if (totalChars + file.stats.size <= options.tokenLimitChars) {
+        filteredScoredFiles.push(file);
+        totalChars += file.stats.size;
+      } else if (options.summarizeLargeFiles || options.truncateLargeFiles) {
+        // If we can summarize/truncate, accept it with approximate reduced size
+        const estimatedSize = Math.min(file.stats.size, 1500); // Rough estimate for summary
+        if (totalChars + estimatedSize <= options.tokenLimitChars) {
+          filteredScoredFiles.push(file);
+          totalChars += estimatedSize;
+        }
+      }
+    }
+
+    // If we filtered files, use the filtered list
+    if (filteredScoredFiles.length < scoredFiles.length) {
+      console.log(
+        chalk.cyan(
+          `Limiting to ${filteredScoredFiles.length} files to stay within token budget`
+        )
+      );
+      scoredFiles = filteredScoredFiles;
+    }
+  }
 
   // Extract the sorted arrays
   const sortedFiles = scoredFiles.map((item) => item.file);
@@ -277,6 +770,71 @@ function prioritizeFiles(
     fileContents: sortedContents,
     fileStats: sortedStats,
   };
+}
+
+/**
+ * Check if a file is too large for processing
+ * @param filePath Path to the file
+ * @param options Program options
+ * @returns Boolean indicating if the file should be skipped due to size
+ */
+export function isFileTooLarge(
+  filePath: string,
+  options: ProgramOptions
+): boolean {
+  try {
+    const stats = fs.statSync(filePath);
+    const maxSize =
+      options.maxFileSizeBytes || parseInt(options.maxFileSize || "500") * 1024;
+    return stats.size > maxSize;
+  } catch (error) {
+    // If we can't check size, assume it's not too large
+    return false;
+  }
+}
+
+/**
+ * Safely read a file with proper error handling and UTF-8 validation
+ * @param filePath Path to the file
+ * @param options Program options
+ * @returns Object with file content and success flag
+ */
+export function safeReadFile(
+  filePath: string,
+  options: ProgramOptions
+): { content: string; success: boolean } {
+  try {
+    // Skip binary files if option enabled
+    if (options.skipBinary && isLikelyBinaryFile(filePath)) {
+      return { content: "", success: false };
+    }
+
+    // Skip large files without trying to read them
+    if (isFileTooLarge(filePath, options)) {
+      return { content: "", success: false };
+    }
+
+    // Try to read with UTF-8 encoding
+    try {
+      const content = fs.readFileSync(filePath, "utf8");
+      return { content, success: true };
+    } catch (error) {
+      // If UTF-8 reading fails and forceUtf8 is false, try binary reading
+      if (!options.forceUtf8) {
+        const buffer = fs.readFileSync(filePath);
+        // Replace invalid UTF-8 sequences with replacement character
+        const content = buffer
+          .toString("utf8", 0, buffer.length)
+          .replace(/[^\x00-\x7F]/g, "?");
+        return { content, success: true };
+      }
+
+      // Otherwise, report failure
+      return { content: "", success: false };
+    }
+  } catch (error) {
+    return { content: "", success: false };
+  }
 }
 
 export { findFiles, getFileTree, prioritizeFiles };

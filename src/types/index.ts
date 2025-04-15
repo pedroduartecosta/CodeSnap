@@ -1,4 +1,6 @@
-// Program options interface
+// src/types/index.ts - Expanded types for improved large project handling
+
+// Program options interface with additional options
 export interface ProgramOptions {
   directory: string;
   ignore?: string[];
@@ -20,6 +22,7 @@ export interface ProgramOptions {
   stripComments: boolean;
   recent: string;
   maxFileSize: string;
+  maxFileSizeBytes?: number; // Added for clarity
   truncateLargeFiles: boolean;
   saveConfig?: string;
   loadConfig?: string;
@@ -28,6 +31,9 @@ export interface ProgramOptions {
   llm: string;
   redactCredentials: boolean;
   verbose: boolean;
+  maxFiles?: number; // New: Maximum number of files to include
+  skipBinary?: boolean; // New: Skip binary files
+  forceUtf8?: boolean; // New: Force UTF-8 encoding
 }
 
 // Default file patterns
@@ -70,4 +76,33 @@ export interface ScoredFile {
   content: string;
   stats: FileStat;
   score: number;
+}
+
+// Project summary stats
+export interface ProjectStats {
+  totalFiles: number;
+  includedFiles: number;
+  totalSize: number;
+  totalTokens: number;
+  skippedBinaryFiles: number;
+  skippedLargeFiles: number;
+  skippedEncodingIssues: number;
+}
+
+// Configuration profile
+export interface ConfigProfile {
+  name: string;
+  options: ProgramOptions;
+  lastUsed: Date;
+  description?: string;
+}
+
+// File type identification result
+export interface FileTypeInfo {
+  isBinary: boolean;
+  isLarge: boolean;
+  isConfig: boolean;
+  isPriority: boolean;
+  isEntry: boolean;
+  estimatedTokens: number;
 }
