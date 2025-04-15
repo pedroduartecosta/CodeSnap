@@ -1,4 +1,4 @@
-// src/index.ts - Main improvements for large project handling
+#!/usr/bin/env node
 
 import { program } from "commander";
 import chalk from "chalk";
@@ -17,9 +17,14 @@ import {
   saveConfig,
 } from "./utils/interactive";
 import { prioritizeFiles } from "./utils/file-utils";
-import { ProgramOptions, DefaultPatterns, FileStat } from "./types";
+import {
+  ProgramOptions,
+  DefaultPatterns,
+  FileStat,
+  RedactedCredential,
+} from "./types";
 
-// Default directories to ignore (EXPANDED)
+// Default directories and file patterns are kept the same
 const DEFAULT_IGNORE_DIRS: string[] = [
   // Package directories
   "**/node_modules/**",
@@ -300,11 +305,11 @@ function setupProgram(): ProgramOptions {
     .option("--dry-run", "Show what would be copied without copying")
     .option("--summary", "Show only summary without copying")
     .option("--interactive", "Interactive mode to select files")
-    .option("--smart", "Smart mode to prioritize important files", true) // Enabled by default now
+    .option("--smart", "Smart mode to prioritize important files", true)
     .option(
       "--strip-comments",
       "Strip comments from code to reduce token usage",
-      true // Enabled by default now
+      true
     )
     .option(
       "--recent <days>",
@@ -314,7 +319,7 @@ function setupProgram(): ProgramOptions {
     .option(
       "--max-file-size <size>",
       "Maximum size for a single file in KB",
-      (MAX_INDIVIDUAL_FILE_SIZE / 1024).toString() // Default to 500KB
+      (MAX_INDIVIDUAL_FILE_SIZE / 1024).toString()
     )
     .option(
       "--truncate-large-files",
@@ -325,26 +330,32 @@ function setupProgram(): ProgramOptions {
     .option(
       "--optimize-tokens",
       "Optimize token usage (strips comments, trims whitespace)",
-      true // Enabled by default now
+      true
     )
     .option(
       "--summarize-large-files",
       "Include auto-generated summaries of large files",
-      true // Enabled by default now
+      true
     )
     .option(
       "--llm <name>",
       "Optimize output for specific LLM (gpt-4, claude, etc.)",
       "gpt-4"
     )
+    // Change the default to true and invert the negative flag
     .option(
       "--redact-credentials",
-      "Automatically redact API keys and credentials",
+      "Automatically redact API keys and credentials (default)",
       true
     )
     .option(
       "--no-redact-credentials",
       "Don't redact credentials (use with caution)"
+    )
+    // Make show-redacted work independently with a description that indicates redaction is default
+    .option(
+      "--show-redacted",
+      "Show information about redacted credentials in the output"
     )
     .option("--verbose", "Show more detailed output")
     .option(
@@ -352,16 +363,12 @@ function setupProgram(): ProgramOptions {
       "Maximum number of files to include",
       MAX_TOTAL_FILES.toString()
     )
-    .option("--skip-binary", "Skip binary files", true) // Enabled by default now
-    .option(
-      "--show-redacted",
-      "Show information about redacted credentials (only works with --redact-credentials)"
-    )
+    .option("--skip-binary", "Skip binary files", true)
     .option(
       "--force-utf8",
       "Force UTF-8 encoding and skip invalid files",
       true
-    ); // Enabled by default now
+    );
 
   program.parse(process.argv);
   return program.opts() as ProgramOptions;
@@ -690,43 +697,62 @@ async function main(): Promise<void> {
     );
   }
 
-  // Format output
-  const formattedOutput = formatOutput(
-    selectedFiles,
-    selectedContents,
-    options,
-    selectedStats
-  );
+  // Process redaction and collect redacted credentials
+  let finalOutput = "";
+  const allRedactedCredentials: RedactedCredential[] = [];
 
-  // Redact credentials if enabled
-  let finalOutput = formattedOutput;
   if (options.redactCredentials) {
     spinner.start("Checking for and redacting credentials...");
     let credentialsFoundCount = 0;
 
     // Process each file content for credentials
     const redactedContents: string[] = [];
+
     selectedFiles.forEach((file, index) => {
       const content = selectedContents[index];
       const result = redactCredentials(content, file);
       redactedContents.push(result.content);
+
       if (result.credentialsFound) {
         credentialsFoundCount++;
+
+        // Collect redacted credentials if show-redacted is enabled
+        if (options.showRedacted && result.redactedCredentials) {
+          allRedactedCredentials.push(...result.redactedCredentials);
+        }
       }
     });
 
-    // Regenerate output with redacted content if any credentials were found
-    if (credentialsFoundCount > 0) {
-      spinner.succeed(`Redacted credentials in ${credentialsFoundCount} files`);
-      finalOutput = formatOutput(
-        selectedFiles,
-        redactedContents,
-        options,
-        selectedStats
-      );
-    } else {
-      spinner.succeed("No credentials found");
-    }
+    // Generate output with redacted contents
+    spinner.succeed(
+      credentialsFoundCount > 0
+        ? `Redacted credentials in ${credentialsFoundCount} files`
+        : "No credentials found"
+    );
+
+    finalOutput = formatOutput(
+      selectedFiles,
+      redactedContents,
+      options,
+      selectedStats
+    );
+  } else {
+    // Format without redaction if explicitly disabled
+    finalOutput = formatOutput(
+      selectedFiles,
+      selectedContents,
+      options,
+      selectedStats
+    );
+  }
+
+  // Display redacted credentials in CLI if requested
+  if (
+    options.redactCredentials &&
+    options.showRedacted &&
+    allRedactedCredentials.length > 0
+  ) {
+    showRedactedCredentialsSummary(allRedactedCredentials, options.directory);
   }
 
   // Copy to clipboard or print to stdout
@@ -745,6 +771,50 @@ async function main(): Promise<void> {
   } else {
     console.log(finalOutput);
   }
+}
+
+/**
+ * Display a summary of redacted credentials in the console
+ * @param redactedCredentials Array of redacted credential information
+ * @param baseDir Base directory for relative path display
+ */
+function showRedactedCredentialsSummary(
+  redactedCredentials: RedactedCredential[],
+  baseDir: string
+) {
+  if (redactedCredentials.length === 0) return;
+
+  console.log(chalk.yellow("\nRedacted Credentials Summary:"));
+  console.log(chalk.yellow("---------------------------"));
+
+  // Group by file
+  const byFile: { [key: string]: RedactedCredential[] } = {};
+  redactedCredentials.forEach((cred) => {
+    const relativePath = path.relative(baseDir, cred.file);
+    if (!byFile[relativePath]) byFile[relativePath] = [];
+    byFile[relativePath].push(cred);
+  });
+
+  // Display by file
+  Object.keys(byFile)
+    .sort()
+    .forEach((file) => {
+      console.log(chalk.cyan(`\nFile: ${file}`));
+      byFile[file].forEach((cred) => {
+        console.log(
+          `  - ${chalk.green(cred.type)} at line ${chalk.yellow(
+            cred.line.toString()
+          )}:${chalk.yellow(cred.column.toString())}: ${chalk.red(
+            cred.partialValue
+          )}`
+        );
+      });
+    });
+
+  console.log(
+    chalk.yellow(`\nTotal credentials redacted: ${redactedCredentials.length}`)
+  );
+  console.log(chalk.yellow("---------------------------\n"));
 }
 
 // Export for use in bin file
