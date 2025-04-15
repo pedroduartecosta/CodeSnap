@@ -354,6 +354,10 @@ function setupProgram(): ProgramOptions {
     )
     .option("--skip-binary", "Skip binary files", true) // Enabled by default now
     .option(
+      "--show-redacted",
+      "Show information about redacted credentials (only works with --redact-credentials)"
+    )
+    .option(
       "--force-utf8",
       "Force UTF-8 encoding and skip invalid files",
       true

@@ -34,6 +34,7 @@ export interface ProgramOptions {
   maxFiles?: number; // New: Maximum number of files to include
   skipBinary?: boolean; // New: Skip binary files
   forceUtf8?: boolean; // New: Force UTF-8 encoding
+  showRedacted: boolean;
 }
 
 // Default file patterns
@@ -64,10 +65,18 @@ export interface CredentialPattern {
   group: number;
 }
 
-// Redact result
+export interface RedactedCredential {
+  file: string;
+  line: number;
+  column: number;
+  type: string; // E.g., "API Key", "Password", etc.
+  partialValue?: string; // First few chars for identification
+}
+
 export interface RedactResult {
   content: string;
   credentialsFound: boolean;
+  redactedCredentials: RedactedCredential[]; // Add this
 }
 
 // File with score for prioritization
