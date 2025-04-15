@@ -1,0 +1,73 @@
+// Program options interface
+export interface ProgramOptions {
+  directory: string;
+  ignore?: string[];
+  extensions?: string[];
+  files?: string[];
+  exclude?: string[];
+  limit: string;
+  limitBytes: number;
+  tokens: string;
+  tokenLimitChars: number;
+  copy: boolean;
+  tree: boolean;
+  listOnly: boolean;
+  respectGitignore: boolean;
+  dryRun: boolean;
+  summary: boolean;
+  interactive: boolean;
+  smart: boolean;
+  stripComments: boolean;
+  recent: string;
+  maxFileSize: string;
+  truncateLargeFiles: boolean;
+  saveConfig?: string;
+  loadConfig?: string;
+  optimizeTokens: boolean;
+  summarizeLargeFiles: boolean;
+  llm: string;
+  redactCredentials: boolean;
+  verbose: boolean;
+}
+
+// Default file patterns
+export interface DefaultPatterns {
+  DEFAULT_IGNORE_DIRS: string[];
+  DEFAULT_INCLUDE_EXTS: string[];
+  DEFAULT_INCLUDE_FILES: string[];
+  DEFAULT_EXCLUDE_FILES: string[];
+}
+
+// File statistics
+export interface FileStat {
+  path: string;
+  size: number;
+  tokens: number;
+}
+
+// Prioritized files result
+export interface PrioritizedResult {
+  files: string[];
+  fileContents: string[];
+  fileStats: FileStat[];
+}
+
+// Credential pattern
+export interface CredentialPattern {
+  regex: RegExp;
+  group: number;
+}
+
+// Redact result
+export interface RedactResult {
+  content: string;
+  credentialsFound: boolean;
+}
+
+// File with score for prioritization
+export interface ScoredFile {
+  file: string;
+  content: string;
+  stats: FileStat;
+  score: number;
+}
