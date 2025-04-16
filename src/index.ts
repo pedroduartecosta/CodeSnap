@@ -37,7 +37,7 @@ import {
 // Setup command-line options
 function setupProgram(): ProgramOptions {
   program
-    .name("llm-context")
+    .name("codesnap")
     .description("Intelligently collect code from your project for LLM context")
     .version("0.1.1")
     .option("-d, --directory <dir>", "Root directory to scan", process.cwd())

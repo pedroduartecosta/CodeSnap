@@ -1,5 +1,5 @@
 /**
- * Constants for the LLM-Context tool
+ * Constants for the codesnap tool
  * Contains default configuration values, file patterns, and size limits
  */
 

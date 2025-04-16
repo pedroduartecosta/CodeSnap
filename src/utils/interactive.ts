@@ -158,7 +158,7 @@ async function interactiveFileSelection(
 function saveConfig(options: ProgramOptions, configName: string): void {
   try {
     // Create config directory if it doesn't exist
-    const configDir = path.join(os.homedir(), ".llm-context");
+    const configDir = path.join(os.homedir(), ".codesnap");
     if (!fs.existsSync(configDir)) {
       fs.mkdirSync(configDir);
     }
@@ -192,7 +192,7 @@ function loadConfig(configName: string): ProgramOptions | null {
   try {
     const configPath = path.join(
       os.homedir(),
-      ".llm-context",
+      ".codesnap",
       `${configName}.json`
     );
     if (!fs.existsSync(configPath)) {
@@ -218,7 +218,7 @@ function loadConfig(configName: string): ProgramOptions | null {
  */
 function listSavedConfigs(): void {
   try {
-    const configDir = path.join(os.homedir(), ".llm-context");
+    const configDir = path.join(os.homedir(), ".codesnap");
     if (!fs.existsSync(configDir)) {
       return;
     }
@@ -233,7 +233,7 @@ function listSavedConfigs(): void {
       configs.forEach((config) => {
         console.log(`- ${config}`);
       });
-      console.log(chalk.cyan(`Load with: llm-context --load-config <name>`));
+      console.log(chalk.cyan(`Load with: codesnap --load-config <name>`));
     }
   } catch (error) {
     // Ignore errors when listing configs

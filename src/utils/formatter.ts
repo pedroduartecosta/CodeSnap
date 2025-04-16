@@ -457,7 +457,7 @@ function formatOutput(
 
   // Add a header with project info
   output += "# PROJECT CONTEXT\n\n";
-  output += `This code was collected by the LLM-Context tool on ${
+  output += `This code was collected by the codesnap tool on ${
     new Date().toISOString().split("T")[0]
   }.\n`;
 
@@ -577,10 +577,10 @@ function formatOutput(
     }
   }
 
-  // Add a note about LLM-Context
+  // Add a note about codesnap
   output += "---\n";
   output +=
-    "Generated with LLM-Context (improved for large projects). For more options run: `npx llm-context --help`\n";
+    "Generated with codesnap (improved for large projects). For more options run: `npx codesnap --help`\n";
 
   return output;
 }

@@ -1,11 +1,11 @@
 {
-  "name": "llm-context",
+  "name": "codesnap",
   "version": "0.1.0",
   "description": "CLI tool to intelligently collect code from your project for LLM context",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "llm-context": "./bin/llm-context.js"
+    "codesnap": "./bin/codesnap.js"
   },
   "scripts": {
     "build": "tsc",

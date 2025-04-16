@@ -19,9 +19,10 @@ A smart CLI tool that collects relevant code from your project to provide contex
 
 ```bash
 # Install globally
-npm install -g llm-context
+npm install -g codesnap
 
 # Or use with npx without installing
-npx llm-context
+npx codesnap
 
 
+```
