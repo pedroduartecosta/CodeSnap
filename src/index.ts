@@ -384,9 +384,6 @@ function isLikelyBinaryFile(filePath: string): boolean {
 // Main function
 async function main(): Promise<void> {
   let options = setupProgram();
-
-  console.log(chalk.cyan("LLM-Context: Preparing project context..."));
-
   // Load configuration if specified
   if (options.loadConfig) {
     const loadedOptions = loadConfig(options.loadConfig);

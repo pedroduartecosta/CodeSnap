@@ -1,29 +1,29 @@
+// Improved version of security.ts with more precise credential detection
+
 import { CredentialPattern, RedactResult, RedactedCredential } from "../types";
 
-/**
- * Predefined patterns for detecting various types of credentials in code
- */
+// More precise credential patterns with additional context requirements
 const CREDENTIAL_PATTERNS: CredentialPattern[] = [
-  // API Keys, tokens, etc.
+  // API keys and tokens - more specific matching to avoid false positives
   {
     regex:
-      /(["']?(?:api[_-]?key|api[_-]?token|app[_-]?key|app[_-]?token|auth[_-]?token|access[_-]?token|secret[_-]?key|client[_-]?secret)["']?\s*(?:=|:)\s*["'])([\w\d_\-\.]{10,})["']/gi,
+      /(["']?(?:api[_-]?key|api[_-]?token|app[_-]?key|app[_-]?token|auth[_-]?token|access[_-]?token|secret[_-]?key|client[_-]?secret)["']?\s*(?:=|:)\s*["'])([A-Za-z0-9_\-\.]{16,})["']/gi,
     group: 2,
   },
 
-  // AWS
+  // AWS access keys - more specific format matching
   {
     regex:
-      /(["']?(?:aws[_-]?access[_-]?key[_-]?id)["']?\s*(?:=|:)\s*["'])([\w\d]{16,})["']/gi,
+      /(["']?(?:aws[_-]?access[_-]?key[_-]?id)["']?\s*(?:=|:)\s*["'])([A-Z0-9]{20})["']/gi,
     group: 2,
   },
   {
     regex:
-      /(["']?(?:aws[_-]?secret[_-]?(?:access[_-]?)?key)["']?\s*(?:=|:)\s*["'])([\w\d\/+]{30,})["']/gi,
+      /(["']?(?:aws[_-]?secret[_-]?(?:access[_-]?)?key)["']?\s*(?:=|:)\s*["'])([A-Za-z0-9\/+]{40})["']/gi,
     group: 2,
   },
 
-  // Database connection strings
+  // Database connection strings - improved pattern to match actual connection strings
   {
     regex:
       /(["']?(?:mongodb(?:\+srv)?:\/\/(?:[\w\d]+):))([\w\d@_\-\.\/+%:]+)(['"])/gi,
@@ -35,49 +35,51 @@ const CREDENTIAL_PATTERNS: CredentialPattern[] = [
     group: 2,
   },
 
-  // Passwords
+  // Passwords - more specific to avoid false positives with common words
   {
     regex:
-      /(["']?(?:password|passwd|pwd)["']?\s*(?:=|:)\s*["'])([\w\d!@#$%^&*()_+\-=\[\]{}|;':",./<>?]{4,})["']/gi,
+      /(["']?(?:password|passwd|pwd)["']?\s*(?:=|:)\s*["'])([A-Za-z0-9!@#$%^&*()_+\-=\[\]{}|;':",./<>?]{8,})["']/gi,
     group: 2,
   },
 
-  // Private keys
+  // Private keys - kept as is since it's specific enough
   {
     regex: /(-----BEGIN (?:RSA |DSA |EC )?PRIVATE KEY-----[\s\S]+?)(-{5}END)/gi,
     group: 1,
   },
 
-  // OAuth tokens
+  // OAuth tokens - made more specific with longer length requirements
   {
     regex:
-      /(["']?(?:oauth[_-]?token|bearer[_-]?token|access[_-]?token|refresh[_-]?token)["']?\s*(?:=|:)\s*["'])([\w\d_\-\.]{10,})["']/gi,
+      /(["']?(?:oauth[_-]?token|bearer[_-]?token|access[_-]?token|refresh[_-]?token)["']?\s*(?:=|:)\s*["'])([A-Za-z0-9_\-\.]{16,})["']/gi,
     group: 2,
   },
 
-  // JWT tokens
-  {
-    regex: /(["']?(?:jwt|token)["']?\s*(?:=|:)\s*["'])(eyJ[\w\-\.]+)["']/gi,
-    group: 2,
-  },
-
-  // Firebase config
-  {
-    regex: /(firebaseConfig\s*=\s*\{[\s\S]*?apiKey:)\s*["']([\w\d\-_]+)["']/gi,
-    group: 2,
-  },
-
-  // Environment variables
+  // JWT tokens - more specific pattern for JWT format
   {
     regex:
-      /((?:SECRET|TOKEN|KEY|PASSWORD|CREDENTIAL|AUTH)[\w\d_]*\s*=\s*)([\w\d!@#$%^&*()_+\-=\[\]{}|;':",./<>?]{4,})/gi,
+      /(["']?(?:jwt|token)["']?\s*(?:=|:)\s*["'])(eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+)["']/gi,
     group: 2,
   },
 
-  // Generic secrets
+  // Firebase config - more specific pattern
   {
     regex:
-      /(["']?(?:secret|token|key|password|credential|auth)["']?\s*(?:=|:)\s*["'])([\w\d!@#$%^&*()_+\-=\[\]{}|;':",./<>?]{8,})["']/gi,
+      /(firebaseConfig\s*=\s*\{[\s\S]*?apiKey:)\s*["']([A-Za-z0-9\-_]{39})["']/gi,
+    group: 2,
+  },
+
+  // Environment variables - more specific pattern to avoid code identifiers
+  {
+    regex:
+      /((?:SECRET|TOKEN|KEY|PASSWORD|CREDENTIAL|AUTH)[\w\d_]*\s*=\s*['""])([A-Za-z0-9!@#$%^&*()_+\-=\[\]{}|;':",./<>?]{8,})['"']/gi,
+    group: 2,
+  },
+
+  // Generic secrets - more specific pattern with longer length and special formatting
+  {
+    regex:
+      /(["']?(?:secret|token|key|password|credential|auth)["']?\s*(?:=|:)\s*["'])([A-Za-z0-9!@#$%^&*()_+\-=\[\]{}|;':",./<>?]{12,})["']/gi,
     group: 2,
   },
 ];
@@ -129,7 +131,7 @@ function redactCredentials(content: string, filePath: string): RedactResult {
   let credentialsFound = false;
   const redactedCredentials: RedactedCredential[] = [];
 
-  // Determine if the file is likely to contain credentials
+  // Check if this is a likely config/env file to be more aggressive
   const isEnvFile =
     filePath &&
     (filePath.includes(".env") ||
@@ -138,7 +140,7 @@ function redactCredentials(content: string, filePath: string): RedactResult {
       filePath.endsWith("secrets.yml") ||
       filePath.endsWith("credentials.json"));
 
-  // Process each pattern
+  // Process all credential patterns
   CREDENTIAL_PATTERNS.forEach((pattern) => {
     const matches = [...redactedContent.matchAll(pattern.regex)];
     if (matches.length > 0) {
@@ -150,6 +152,11 @@ function redactCredentials(content: string, filePath: string): RedactResult {
         const sensitiveData = match[pattern.group];
         const replacement = "[REDACTED]";
 
+        // Skip common false positives
+        if (isCommonFalsePositive(sensitiveData)) {
+          return;
+        }
+
         // Get line and column information
         const index = match.index || 0;
         const contentUpToMatch = redactedContent.substring(0, index);
@@ -160,46 +167,49 @@ function redactCredentials(content: string, filePath: string): RedactResult {
         // Determine credential type
         const credType = determineCredentialType(fullMatch);
 
-        // Add to redacted credentials list with only partial info for safety
+        // Add to the list of redacted credentials
         redactedCredentials.push({
           file: filePath,
           line: lineNumber,
           column: columnNumber,
           type: credType,
-          partialValue: sensitiveData.substring(0, 3) + "...", // Only keep first 3 chars for safety
+          partialValue: sensitiveData.substring(0, 3) + "...",
         });
 
-        // Replace sensitive data with [REDACTED]
+        // Replace the sensitive data in the content
         let replacementText = fullMatch.replace(sensitiveData, replacement);
         redactedContent = redactedContent.replace(fullMatch, replacementText);
       });
     }
   });
 
-  // Special handling for .env files, config files, or other files likely to contain credentials
+  // Additional handling for environment variables in env files
   if (isEnvFile) {
-    // For .env files, we can apply additional redaction rules
-    // This could include scanning for environment variable patterns
-    const envVarRegex = /^([A-Za-z0-9_]+)=(.+)$/gm;
+    // Use a more specific regex to match env vars with values
+    const envVarRegex = /^([A-Za-z0-9_]+)=(['"](.*?)['"]|(.*))$/gm;
     const envMatches = [...redactedContent.matchAll(envVarRegex)];
 
     envMatches.forEach((match) => {
       const varName = match[1];
-      const varValue = match[2];
+      const varValue = match[3] || match[4]; // Get the value, whether quoted or not
 
-      // Check if this variable name suggests it contains sensitive information
-      if (isSensitiveEnvVarName(varName) && !isAlreadyRedacted(varValue)) {
+      // Only redact if it's likely a sensitive variable name and not a common false positive
+      if (
+        isSensitiveEnvVarName(varName) &&
+        !isCommonFalsePositive(varValue) &&
+        !isAlreadyRedacted(varValue)
+      ) {
         credentialsFound = true;
 
-        // Get line information
+        // Get line and column information
         const index = match.index || 0;
         const contentUpToMatch = redactedContent.substring(0, index);
         const lines = contentUpToMatch.split("\n");
         const lineNumber = lines.length;
         const columnNumber =
-          lines[lines.length - 1].length + varName.length + 1; // After the '='
+          lines[lines.length - 1].length + varName.length + 1; // After the = sign
 
-        // Add to redacted credentials list
+        // Add to the list of redacted credentials
         redactedCredentials.push({
           file: filePath,
           line: lineNumber,
@@ -208,11 +218,10 @@ function redactCredentials(content: string, filePath: string): RedactResult {
           partialValue: varValue.substring(0, 3) + "...",
         });
 
-        // Replace the value with [REDACTED]
-        redactedContent = redactedContent.replace(
-          `${varName}=${varValue}`,
-          `${varName}=[REDACTED]`
-        );
+        // Replace the value with a redacted version
+        const fullMatch = match[0];
+        const redactedMatch = `${varName}=[REDACTED]`;
+        redactedContent = redactedContent.replace(fullMatch, redactedMatch);
       }
     });
   }
@@ -254,6 +263,41 @@ function isSensitiveEnvVarName(varName: string): boolean {
  */
 function isAlreadyRedacted(value: string): boolean {
   return value === "[REDACTED]" || value.includes("REDACTED");
+}
+
+/**
+ * Helper function to check if a value is likely a false positive
+ * @param value String value to check
+ * @returns Whether the value is likely a false positive
+ */
+function isCommonFalsePositive(value: string): boolean {
+  // Common JavaScript/TypeScript values that might be flagged
+  const commonFalsePositives = [
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "Object",
+    "Array",
+    "String",
+    "Number",
+    "Boolean",
+    "Function",
+    "Math",
+    "Date",
+    "RegExp",
+    "match",
+    "matches",
+    "pattern",
+    "index",
+    "object",
+    "length",
+  ];
+
+  return (
+    commonFalsePositives.includes(value) ||
+    (/^[A-Za-z]+$/.test(value) && value.length < 8)
+  ); // Single word with no numbers/symbols and short
 }
 
 /**
