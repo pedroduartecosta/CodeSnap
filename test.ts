@@ -1,5 +1,3 @@
-// src/utils/formatter.ts - Consolidated content formatting utilities
-
 import path from "path";
 import { filesize } from "filesize";
 import chalk from "chalk";

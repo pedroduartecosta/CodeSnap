@@ -22,7 +22,7 @@ export interface ProgramOptions {
   stripComments: boolean;
   recent: string;
   maxFileSize: string;
-  maxFileSizeBytes?: number; // Added for clarity
+  maxFileSizeBytes: number; // Added for clarity
   truncateLargeFiles: boolean;
   saveConfig?: string;
   loadConfig?: string;

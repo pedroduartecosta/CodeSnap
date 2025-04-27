@@ -1,4 +1,4 @@
-// src/utils/file-utils.ts - Complete improved version for large projects
+// src/utils/file-utils.ts - Consolidated file utilities
 
 import fs from "fs";
 import path from "path";
@@ -15,190 +15,19 @@ import {
   PrioritizedResult,
   ScoredFile,
   FileTypeInfo,
+  ProjectStats,
 } from "../types";
 
-// High value files that should be prioritized
-export const HIGH_PRIORITY_FILES: string[] = [
-  "package.json",
-  "tsconfig.json",
-  "next.config.js",
-  "webpack.config.js",
-  "vite.config.js",
-  "rollup.config.js",
-  "jest.config.js",
-  "babel.config.js",
-  ".eslintrc",
-  ".eslintrc.js",
-  ".eslintrc.json",
-  "docker-compose.yml",
-  "Dockerfile",
-  "Makefile",
-  "go.mod",
-  "go.sum",
-  "Cargo.toml",
-  "pyproject.toml",
-  "requirements.txt",
-  "setup.py",
-  "build.gradle",
-  "pom.xml",
-  "app.config.ts",
-  "project.config.json",
-  // Language-specific main config files
-  "settings.gradle",
-  "build.sbt",
-  "mix.exs",
-  "CMakeLists.txt",
-  "meson.build",
-  "deno.json",
-  "angular.json",
-  "nuxt.config.js",
-  "svelte.config.js",
-  "gatsby-config.js",
-  "astro.config.mjs",
-  "tailwind.config.js",
-  "postcss.config.js",
-];
-
-// Entry point files that should be prioritized
-export const ENTRY_POINT_PATTERNS: string[] = [
-  "index.js",
-  "index.ts",
-  "index.tsx",
-  "index.jsx",
-  "main.js",
-  "main.ts",
-  "main.py",
-  "app.js",
-  "app.ts",
-  "app.py",
-  "server.js",
-  "server.ts",
-  "src/index.*",
-  "src/main.*",
-  "src/app.*",
-  // More entry points
-  "cmd/main.go",
-  "cmd/*/main.go",
-  "main.go",
-  "Program.cs",
-  "Main.java",
-  "Application.java",
-  "app.rb",
-  "main.rs",
-  "lib.rs",
-  "mod.rs",
-];
-
-// Folders that likely contain important code
-export const IMPORTANT_FOLDERS: string[] = [
-  "src/",
-  "app/",
-  "lib/",
-  "core/",
-  "api/",
-  "controllers/",
-  "models/",
-  "services/",
-  "utils/",
-  "helpers/",
-  "components/",
-  "hooks/",
-  "store/",
-  "context/",
-  "reducers/",
-  "actions/",
-  "middleware/",
-  "providers/",
-];
-
-// Binary file extensions to skip
-export const BINARY_EXTENSIONS: string[] = [
-  // Images
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".gif",
-  ".bmp",
-  ".tiff",
-  ".ico",
-  ".svg",
-  ".webp",
-
-  // Audio
-  ".mp3",
-  ".wav",
-  ".ogg",
-  ".flac",
-  ".aac",
-  ".m4a",
-
-  // Video
-  ".mp4",
-  ".webm",
-  ".avi",
-  ".mov",
-  ".wmv",
-  ".flv",
-  ".mkv",
-
-  // Compiled
-  ".dll",
-  ".so",
-  ".dylib",
-  ".a",
-  ".lib",
-  ".obj",
-  ".o",
-  ".class",
-  ".pyc",
-  ".pyo",
-
-  // Compressed
-  ".zip",
-  ".tar",
-  ".gz",
-  ".7z",
-  ".rar",
-  ".bz2",
-  ".xz",
-
-  // Documents
-  ".pdf",
-  ".doc",
-  ".docx",
-  ".xls",
-  ".xlsx",
-  ".ppt",
-  ".pptx",
-
-  // Database/data files
-  ".db",
-  ".sqlite",
-  ".sqlite3",
-  ".mdb",
-  ".csv",
-  ".tsv",
-  ".dat",
-  ".bin",
-
-  // Font files
-  ".ttf",
-  ".otf",
-  ".woff",
-  ".woff2",
-  ".eot",
-
-  // Other binary formats
-  ".exe",
-  ".dmg",
-  ".iso",
-  ".img",
-
-  // Large text formats that aren't useful for context
-  ".map",
-  ".min.js",
-  ".min.css",
-];
+import {
+  BINARY_EXTENSIONS,
+  HIGH_PRIORITY_FILES,
+  ENTRY_POINT_PATTERNS,
+  IMPORTANT_FOLDERS,
+  FILE_SIZE_LIMITS,
+  DEFAULT_INCLUDE_EXTS,
+  DEFAULT_INCLUDE_FILES,
+  DEFAULT_EXCLUDE_FILES,
+} from "./constants";
 
 /**
  * Check if a file is likely a binary file based on extension
@@ -226,8 +55,8 @@ export function getFileTypeInfo(
   // Check if it's a binary file
   const isBinary = isLikelyBinaryFile(filePath);
 
-  // Check if it's a large file (> 500KB by default)
-  const isLarge = fileSize > 500 * 1024;
+  // Check if it's a large file
+  const isLarge = fileSize > FILE_SIZE_LIMITS.MAX_INDIVIDUAL_FILE_SIZE;
 
   // Check if it's a config file
   const isConfig =
@@ -264,7 +93,7 @@ export function getFileTypeInfo(
  * @param defaults Default patterns
  * @returns Promise resolving to an array of file paths
  */
-async function findFiles(
+export async function findFiles(
   options: ProgramOptions,
   defaults: DefaultPatterns
 ): Promise<string[]> {
@@ -427,7 +256,8 @@ async function findFiles(
     }
 
     // Add a sanity check for maximum number of files
-    const MAX_FILES_TO_PROCESS = options.maxFiles || 1000;
+    const MAX_FILES_TO_PROCESS =
+      options.maxFiles || FILE_SIZE_LIMITS.MAX_TOTAL_FILES;
     if (filteredFiles.length > MAX_FILES_TO_PROCESS) {
       // If we have too many files, prioritize
       spinner.info(
@@ -467,7 +297,7 @@ async function findFiles(
  * @param rootDir Directory to get the file tree for
  * @returns String representation of the file tree
  */
-function getFileTree(rootDir: string): string {
+export function getFileTree(rootDir: string): string {
   try {
     // Try the tree command first
     return execSync("tree --gitignore -L 3", {
@@ -529,6 +359,71 @@ function getFileTree(rootDir: string): string {
 }
 
 /**
+ * Check if a file is too large for processing
+ * @param filePath Path to the file
+ * @param options Program options
+ * @returns Boolean indicating if the file should be skipped due to size
+ */
+export function isFileTooLarge(
+  filePath: string,
+  options: ProgramOptions
+): boolean {
+  try {
+    const stats = fs.statSync(filePath);
+    const maxSize =
+      options.maxFileSizeBytes || parseInt(options.maxFileSize || "500") * 1024;
+    return stats.size > maxSize;
+  } catch (error) {
+    // If we can't check size, assume it's not too large
+    return false;
+  }
+}
+
+/**
+ * Safely read a file with proper error handling and UTF-8 validation
+ * @param filePath Path to the file
+ * @param options Program options
+ * @returns Object with file content and success flag
+ */
+export function safeReadFile(
+  filePath: string,
+  options: ProgramOptions
+): { content: string; success: boolean } {
+  try {
+    // Skip binary files if option enabled
+    if (options.skipBinary && isLikelyBinaryFile(filePath)) {
+      return { content: "", success: false };
+    }
+
+    // Skip large files without trying to read them
+    if (isFileTooLarge(filePath, options)) {
+      return { content: "", success: false };
+    }
+
+    // Try to read with UTF-8 encoding
+    try {
+      const content = fs.readFileSync(filePath, "utf8");
+      return { content, success: true };
+    } catch (error) {
+      // If UTF-8 reading fails and forceUtf8 is false, try binary reading
+      if (!options.forceUtf8) {
+        const buffer = fs.readFileSync(filePath);
+        // Replace invalid UTF-8 sequences with replacement character
+        const content = buffer
+          .toString("utf8", 0, buffer.length)
+          .replace(/[^\x00-\x7F]/g, "?");
+        return { content, success: true };
+      }
+
+      // Otherwise, report failure
+      return { content: "", success: false };
+    }
+  } catch (error) {
+    return { content: "", success: false };
+  }
+}
+
+/**
  * Prioritize files based on importance with improved algorithm for large projects
  * @param files Array of file paths
  * @param fileContents Array of file contents
@@ -536,7 +431,7 @@ function getFileTree(rootDir: string): string {
  * @param options Program options
  * @returns Object containing prioritized files, contents, and stats
  */
-function prioritizeFiles(
+export function prioritizeFiles(
   files: string[],
   fileContents: string[],
   fileStats: FileStat[],
@@ -773,68 +668,81 @@ function prioritizeFiles(
 }
 
 /**
- * Check if a file is too large for processing
- * @param filePath Path to the file
- * @param options Program options
- * @returns Boolean indicating if the file should be skipped due to size
+ * Get project statistics
+ * @param rootDir Project root directory
+ * @param files Array of included files
+ * @param stats Array of file statistics
+ * @returns Project statistics object
  */
-export function isFileTooLarge(
-  filePath: string,
-  options: ProgramOptions
-): boolean {
-  try {
-    const stats = fs.statSync(filePath);
-    const maxSize =
-      options.maxFileSizeBytes || parseInt(options.maxFileSize || "500") * 1024;
-    return stats.size > maxSize;
-  } catch (error) {
-    // If we can't check size, assume it's not too large
-    return false;
-  }
+export function getProjectStats(
+  rootDir: string,
+  files: string[],
+  stats: FileStat[]
+): ProjectStats {
+  return {
+    totalFiles: files.length,
+    includedFiles: files.length,
+    totalSize: stats.reduce((sum, stat) => sum + stat.size, 0),
+    totalTokens: stats.reduce((sum, stat) => sum + stat.tokens, 0),
+    skippedBinaryFiles: 0,
+    skippedLargeFiles: 0,
+    skippedEncodingIssues: 0,
+  };
 }
 
 /**
- * Safely read a file with proper error handling and UTF-8 validation
- * @param filePath Path to the file
+ * Check if a file should be skipped based on various criteria
+ * @param filePath File path to check
  * @param options Program options
- * @returns Object with file content and success flag
+ * @returns Boolean indicating if file should be skipped
  */
-export function safeReadFile(
+export function shouldSkipFile(
   filePath: string,
   options: ProgramOptions
-): { content: string; success: boolean } {
-  try {
-    // Skip binary files if option enabled
-    if (options.skipBinary && isLikelyBinaryFile(filePath)) {
-      return { content: "", success: false };
-    }
-
-    // Skip large files without trying to read them
-    if (isFileTooLarge(filePath, options)) {
-      return { content: "", success: false };
-    }
-
-    // Try to read with UTF-8 encoding
-    try {
-      const content = fs.readFileSync(filePath, "utf8");
-      return { content, success: true };
-    } catch (error) {
-      // If UTF-8 reading fails and forceUtf8 is false, try binary reading
-      if (!options.forceUtf8) {
-        const buffer = fs.readFileSync(filePath);
-        // Replace invalid UTF-8 sequences with replacement character
-        const content = buffer
-          .toString("utf8", 0, buffer.length)
-          .replace(/[^\x00-\x7F]/g, "?");
-        return { content, success: true };
-      }
-
-      // Otherwise, report failure
-      return { content: "", success: false };
-    }
-  } catch (error) {
-    return { content: "", success: false };
+): boolean {
+  // Skip binary files if that option is enabled
+  if (options.skipBinary && isLikelyBinaryFile(filePath)) {
+    return true;
   }
+
+  // Skip files that exceed size limit
+  if (isFileTooLarge(filePath, options)) {
+    return true;
+  }
+
+  return false;
 }
 
-export { findFiles, getFileTree, prioritizeFiles };
+/**
+ * Categorize files by directory for better organization
+ * @param files Array of file paths
+ * @param fileContents Array of file contents
+ * @param fileStats Array of file statistics
+ * @returns Object with files grouped by directory
+ */
+export function categorizeFilesByDirectory(
+  files: string[],
+  fileContents: string[],
+  fileStats: FileStat[]
+): { [key: string]: { file: string; content: string; stat: FileStat }[] } {
+  const filesByDirectory: {
+    [key: string]: { file: string; content: string; stat: FileStat }[];
+  } = {};
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const dir = path.dirname(file);
+
+    if (!filesByDirectory[dir]) {
+      filesByDirectory[dir] = [];
+    }
+
+    filesByDirectory[dir].push({
+      file: file,
+      content: fileContents[i],
+      stat: fileStats[i],
+    });
+  }
+
+  return filesByDirectory;
+}

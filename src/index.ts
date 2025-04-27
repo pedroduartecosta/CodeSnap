@@ -8,33 +8,47 @@ import fs from "fs";
 import path from "path";
 import { filesize } from "filesize";
 
-import { findFiles, getFileTree } from "./utils/file-utils";
-import { formatOutput } from "./utils/formatter";
+// Import consolidated utilities
+import {
+  findFiles,
+  prioritizeFiles,
+  isLikelyBinaryFile,
+  safeReadFile,
+  shouldSkipFile,
+  categorizeFilesByDirectory,
+} from "./utils/file-utils";
+
+import { formatOutput, formatFileContent } from "./utils/formatter";
+
 import { redactCredentials } from "./utils/security";
+
 import {
   interactiveFileSelection,
   loadConfig,
   saveConfig,
 } from "./utils/interactive";
-import { prioritizeFiles } from "./utils/file-utils";
+
+// Import constants
+import {
+  DEFAULT_IGNORE_DIRS,
+  DEFAULT_INCLUDE_EXTS,
+  DEFAULT_INCLUDE_FILES,
+  DEFAULT_EXCLUDE_FILES,
+  FILE_SIZE_LIMITS,
+} from "./utils/constants";
+
+// Import types
 import {
   ProgramOptions,
   DefaultPatterns,
   FileStat,
   RedactedCredential,
 } from "./types";
-import {
-  DEFAULT_IGNORE_DIRS,
-  DEFAULT_INCLUDE_EXTS,
-  DEFAULT_INCLUDE_FILES,
-  DEFAULT_EXCLUDE_FILES,
-  MAX_INDIVIDUAL_FILE_SIZE,
-  MAX_TOTAL_FILES,
-  SMALL_FILE_PREFERENCE_THRESHOLD,
-  DEFAULT_EXCLUDE_EXTS,
-} from "./utils/constants";
 
-// Setup command-line options
+/**
+ * Setup command-line options
+ * @returns Program options
+ */
 function setupProgram(): ProgramOptions {
   program
     .name("codesnap")
@@ -75,7 +89,7 @@ function setupProgram(): ProgramOptions {
     .option(
       "--max-file-size <size>",
       "Maximum size for a single file in KB",
-      (MAX_INDIVIDUAL_FILE_SIZE / 1024).toString()
+      (FILE_SIZE_LIMITS.MAX_INDIVIDUAL_FILE_SIZE / 1024).toString()
     )
     .option(
       "--truncate-large-files",
@@ -98,7 +112,6 @@ function setupProgram(): ProgramOptions {
       "Optimize output for specific LLM (gpt-4, claude, etc.)",
       "gpt-4"
     )
-    // Change the default to true and invert the negative flag
     .option(
       "--redact-credentials",
       "Automatically redact API keys and credentials (default)",
@@ -108,7 +121,6 @@ function setupProgram(): ProgramOptions {
       "--no-redact-credentials",
       "Don't redact credentials (use with caution)"
     )
-    // Make show-redacted work independently with a description that indicates redaction is default
     .option(
       "--show-redacted",
       "Show information about redacted credentials in the output"
@@ -117,7 +129,7 @@ function setupProgram(): ProgramOptions {
     .option(
       "--max-files <num>",
       "Maximum number of files to include",
-      MAX_TOTAL_FILES.toString()
+      FILE_SIZE_LIMITS.MAX_TOTAL_FILES.toString()
     )
     .option("--skip-binary", "Skip binary files", true)
     .option(
@@ -130,16 +142,79 @@ function setupProgram(): ProgramOptions {
   return program.opts() as ProgramOptions;
 }
 
-// Check if a file is likely binary
-function isLikelyBinaryFile(filePath: string): boolean {
-  const ext = path.extname(filePath).toLowerCase();
-  // Check against binary extensions list
-  return DEFAULT_EXCLUDE_EXTS.includes(ext);
+/**
+ * Process the options, setting derived options from base values
+ * @param options Raw program options
+ * @returns Processed options with derived values
+ */
+function processOptions(options: ProgramOptions): ProgramOptions {
+  // Convert KB to bytes
+  options.limitBytes = parseInt(options.limit) * 1024;
+  options.tokenLimitChars = Math.floor(parseInt(options.tokens) * 4); // Rough char approximation
+  options.maxFileSizeBytes =
+    parseInt(
+      options.maxFileSize ||
+        (FILE_SIZE_LIMITS.MAX_INDIVIDUAL_FILE_SIZE / 1024).toString()
+    ) * 1024;
+  options.maxFiles = parseInt(
+    (typeof options.maxFiles === "number"
+      ? options.maxFiles.toString()
+      : options.maxFiles) || FILE_SIZE_LIMITS.MAX_TOTAL_FILES.toString()
+  );
+
+  return options;
 }
 
-// Main function
+/**
+ * Display a summary of redacted credentials in the console
+ * @param redactedCredentials Array of redacted credential information
+ * @param baseDir Base directory for relative path display
+ */
+function showRedactedCredentialsSummary(
+  redactedCredentials: RedactedCredential[],
+  baseDir: string
+): void {
+  if (redactedCredentials.length === 0) return;
+
+  console.log(chalk.yellow("\nRedacted Credentials Summary:"));
+  console.log(chalk.yellow("---------------------------"));
+
+  // Group by file
+  const byFile: { [key: string]: RedactedCredential[] } = {};
+  redactedCredentials.forEach((cred) => {
+    const relativePath = path.relative(baseDir, cred.file);
+    if (!byFile[relativePath]) byFile[relativePath] = [];
+    byFile[relativePath].push(cred);
+  });
+
+  // Display by file
+  Object.keys(byFile)
+    .sort()
+    .forEach((file) => {
+      console.log(chalk.cyan(`\nFile: ${file}`));
+      byFile[file].forEach((cred) => {
+        console.log(
+          `  - ${chalk.green(cred.type)} at line ${chalk.yellow(
+            cred.line.toString()
+          )}:${chalk.yellow(cred.column.toString())}: ${chalk.red(
+            cred.partialValue
+          )}`
+        );
+      });
+    });
+
+  console.log(
+    chalk.yellow(`\nTotal credentials redacted: ${redactedCredentials.length}`)
+  );
+  console.log(chalk.yellow("---------------------------\n"));
+}
+
+/**
+ * Main function
+ */
 async function main(): Promise<void> {
   let options = setupProgram();
+
   // Load configuration if specified
   if (options.loadConfig) {
     const loadedOptions = loadConfig(options.loadConfig);
@@ -154,20 +229,10 @@ async function main(): Promise<void> {
     saveConfig(options, options.saveConfig);
   }
 
-  // Convert KB to bytes
-  options.limitBytes = parseInt(options.limit) * 1024;
-  options.tokenLimitChars = Math.floor(parseInt(options.tokens) * 4); // Rough char approximation
-  options.maxFileSizeBytes =
-    parseInt(
-      options.maxFileSize || (MAX_INDIVIDUAL_FILE_SIZE / 1024).toString()
-    ) * 1024;
-  options.maxFiles = parseInt(
-    (typeof options.maxFiles === "number"
-      ? options.maxFiles.toString()
-      : options.maxFiles) || MAX_TOTAL_FILES.toString()
-  );
+  // Process and set derived options
+  options = processOptions(options);
 
-  // Find files
+  // Define default patterns
   const defaultPatterns: DefaultPatterns = {
     DEFAULT_IGNORE_DIRS,
     DEFAULT_INCLUDE_EXTS,
@@ -175,6 +240,7 @@ async function main(): Promise<void> {
     DEFAULT_EXCLUDE_FILES,
   };
 
+  // Find matching files
   const files = await findFiles(options, defaultPatterns);
 
   if (files.length === 0) {
@@ -209,6 +275,8 @@ async function main(): Promise<void> {
   const readableFiles: string[] = [];
   const fileContents: string[] = [];
   const fileStats: FileStat[] = [];
+  let skippedSize = 0;
+  let skippedCount = 0;
 
   // First pass: Check sizes without loading full content
   for (const file of filteredFiles) {
@@ -222,6 +290,8 @@ async function main(): Promise<void> {
         if (options.verbose) {
           spinner.info(`Skipping large file: ${file} (${filesize(stat.size)})`);
         }
+        skippedSize += stat.size;
+        skippedCount++;
         continue;
       }
 
@@ -267,8 +337,8 @@ async function main(): Promise<void> {
       const sizeA = fileStats[a].size;
       const sizeB = fileStats[b].size;
 
-      const isSmallA = sizeA < SMALL_FILE_PREFERENCE_THRESHOLD;
-      const isSmallB = sizeB < SMALL_FILE_PREFERENCE_THRESHOLD;
+      const isSmallA = sizeA < FILE_SIZE_LIMITS.SMALL_FILE_PREFERENCE_THRESHOLD;
+      const isSmallB = sizeB < FILE_SIZE_LIMITS.SMALL_FILE_PREFERENCE_THRESHOLD;
 
       if (isSmallA && !isSmallB) return -1;
       if (!isSmallA && isSmallB) return 1;
@@ -293,26 +363,12 @@ async function main(): Promise<void> {
         continue;
       }
 
-      // Attempt to read the file with UTF-8 encoding
-      let content: string;
-      try {
-        content = fs.readFileSync(fullPath, "utf8");
-      } catch (error) {
-        if (options.forceUtf8) {
-          // Skip files that can't be read as UTF-8
-          if (options.verbose) {
-            spinner.info(`Skipping non-UTF8 file: ${file}`);
-          }
-          skippedFiles++;
-          continue;
-        } else {
-          // Try with binary encoding and convert
-          const buffer = fs.readFileSync(fullPath);
-          // Replace invalid UTF-8 sequences with replacement character
-          content = buffer
-            .toString("utf8", 0, buffer.length)
-            .replace(/[^\x00-\x7F]/g, "?");
-        }
+      // Read file content safely
+      const { content, success } = safeReadFile(fullPath, options);
+
+      if (!success) {
+        skippedFiles++;
+        continue;
       }
 
       totalSize += content.length;
@@ -354,10 +410,12 @@ async function main(): Promise<void> {
     )}`
   );
 
-  if (skippedFiles > 0) {
+  if (skippedFiles > 0 || skippedCount > 0) {
     console.log(
       chalk.yellow(
-        `Skipped ${skippedFiles} files due to size limits or encoding issues`
+        `Skipped ${skippedFiles + skippedCount} files (${filesize(
+          skippedSize
+        )}) due to size limits or encoding issues`
       )
     );
   }
@@ -526,49 +584,13 @@ async function main(): Promise<void> {
   }
 }
 
-/**
- * Display a summary of redacted credentials in the console
- * @param redactedCredentials Array of redacted credential information
- * @param baseDir Base directory for relative path display
- */
-function showRedactedCredentialsSummary(
-  redactedCredentials: RedactedCredential[],
-  baseDir: string
-) {
-  if (redactedCredentials.length === 0) return;
-
-  console.log(chalk.yellow("\nRedacted Credentials Summary:"));
-  console.log(chalk.yellow("---------------------------"));
-
-  // Group by file
-  const byFile: { [key: string]: RedactedCredential[] } = {};
-  redactedCredentials.forEach((cred) => {
-    const relativePath = path.relative(baseDir, cred.file);
-    if (!byFile[relativePath]) byFile[relativePath] = [];
-    byFile[relativePath].push(cred);
-  });
-
-  // Display by file
-  Object.keys(byFile)
-    .sort()
-    .forEach((file) => {
-      console.log(chalk.cyan(`\nFile: ${file}`));
-      byFile[file].forEach((cred) => {
-        console.log(
-          `  - ${chalk.green(cred.type)} at line ${chalk.yellow(
-            cred.line.toString()
-          )}:${chalk.yellow(cred.column.toString())}: ${chalk.red(
-            cred.partialValue
-          )}`
-        );
-      });
-    });
-
-  console.log(
-    chalk.yellow(`\nTotal credentials redacted: ${redactedCredentials.length}`)
-  );
-  console.log(chalk.yellow("---------------------------\n"));
-}
-
 // Export for use in bin file
 export { main };
+
+// Run the main function if this file is executed directly
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(chalk.red("Error:"), error);
+    process.exit(1);
+  });
+}
