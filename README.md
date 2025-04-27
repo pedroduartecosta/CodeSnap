@@ -5,15 +5,13 @@ CodeSnap is a smart CLI tool that intelligently collects relevant code from your
 ## Features
 
 - 🧠 **Smart file selection** - Only includes relevant files based on extensions and patterns
+- 🔍 **Project type detection** - Automatically identifies project types (code, infrastructure, docs)
 - 📊 **Size awareness** - Shows you the size and token estimates before copying
 - 🌲 **Project structure** - Option to include file tree for better context
 - 📋 **Clipboard integration** - Copies formatted output directly to clipboard
-- ⚙️ **Customizable** - Easily configure which files to include/exclude
 - 🚫 **Respects .gitignore** - Automatically ignores files that Git would ignore
 - 🔒 **Credential redaction** - Automatically detects and redacts API keys and sensitive information
-- 🔍 **Smart prioritization** - Intelligently prioritizes important files like configs and entry points
 - ⚡ **Token optimization** - Reduces token usage by stripping comments or truncating large files
-- 🤖 **LLM optimized** - Format output specifically for your preferred LLM
 
 ## Installation
 
@@ -21,6 +19,8 @@ CodeSnap is a smart CLI tool that intelligently collects relevant code from your
 # Install locally
 pnpm install && pnpm build && pnpm link
 ```
+
+````
 
 ## Usage
 
@@ -42,10 +42,10 @@ codesnap --interactive
 codesnap --tree
 
 # Limit to specific file extensions
-codesnap --extensions .js .ts .jsx .tsx
+codesnap -e .js .ts .jsx .tsx
 
 # Exclude specific patterns
-codesnap --ignore "test/*" "dist/*"
+codesnap -x "test/*" "dist/*"
 
 # Customize size limit (default is 50KB)
 codesnap --limit 100
@@ -53,59 +53,94 @@ codesnap --limit 100
 # Set token limit for LLMs (default is 100000)
 codesnap --tokens 50000
 
-# Optimize output for specific LLM
-codesnap --llm claude
+# Optimize for specific project types
+codesnap --mode infra    # Infrastructure code (Terraform, Kubernetes, etc.)
+codesnap --mode code     # Source code projects
+codesnap --mode doc      # Documentation-heavy projects
 
 # Print output instead of copying to clipboard
 codesnap --no-copy
 ```
 
-### Advanced Features
+### Configuration
 
 ```bash
 # Save your configuration for future use
-codesnap --save-config my-config
+codesnap --save my-config
 
 # Load a saved configuration
-codesnap --load-config my-config
-
-# Only include recent files (modified in the last 7 days)
-codesnap --recent 7
-
-# Show summary without copying
-codesnap --summary
-
-# Dry run to see what would be copied
-codesnap --dry-run
-
-# Set maximum file size (in KB)
-codesnap --max-file-size 100
-
-# Include truncated versions of large files
-codesnap --truncate-large-files
+codesnap --load my-config
 ```
 
-## Configuration
-
-CodeSnap automatically detects important files in your project, but you can customize the behavior:
-
-- It respects your `.gitignore` file by default
-- Automatically prioritizes config files, entry points, and READMEs
-- Skips binary files, images, and other non-text content
-- Redacts sensitive information like API keys and credentials
-
-## Security
+### Security Features
 
 CodeSnap includes built-in security features:
 
 - Automatically detects and redacts API keys, passwords, and tokens
 - Respects `.gitignore` patterns to avoid including sensitive files
-- Can show summaries of redacted content with `--show-redacted`
+- Security levels can be set with `--security auto|strict|none`
 
-## Contributing
+For maximum security when sharing code:
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+```bash
+codesnap --security strict
+```
+
+## Project Type Modes
+
+CodeSnap detects your project type and optimizes file selection accordingly:
+
+### Infrastructure Mode (`--mode infra`)
+
+Optimized for Terraform, Kubernetes, Docker, and other infrastructure-as-code projects:
+
+- Prioritizes `.tf`, `.yaml`, `.hcl`, and other config files
+- Includes templates and deployment configurations
+- Detects and includes resources, services, and deployment files
+
+### Code Mode (`--mode code`)
+
+Optimized for source code projects:
+
+- Prioritizes code files over documentation
+- Strips comments to reduce token usage
+- Prioritizes important files like entry points and core modules
+
+### Documentation Mode (`--mode doc`)
+
+Optimized for documentation-heavy projects:
+
+- Preserves comments and formatting
+- Prioritizes README and documentation files
+- Keeps whitespace and markdown intact
+
+## Examples
+
+Getting context for a Terraform project:
+
+```bash
+codesnap --mode infra
+```
+
+Capturing a React project's core components:
+
+```bash
+codesnap --mode code -e .js .jsx .ts .tsx
+```
+
+Including only recently modified files:
+
+```bash
+codesnap --recent 7
+```
+
+Selecting files interactively with increased security:
+
+```bash
+codesnap --interactive --security strict
+```
 
 ## License
 
 MIT
+````

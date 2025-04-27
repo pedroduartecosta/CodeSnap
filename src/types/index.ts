@@ -22,7 +22,7 @@ export interface ProgramOptions {
   stripComments: boolean;
   recent: string;
   maxFileSize: string;
-  maxFileSizeBytes: number; // Added for clarity
+  maxFileSizeBytes: number;
   truncateLargeFiles: boolean;
   saveConfig?: string;
   loadConfig?: string;
@@ -31,10 +31,24 @@ export interface ProgramOptions {
   llm: string;
   redactCredentials: boolean;
   verbose: boolean;
-  maxFiles?: number; // New: Maximum number of files to include
-  skipBinary?: boolean; // New: Skip binary files
-  forceUtf8?: boolean; // New: Force UTF-8 encoding
+  maxFiles?: number;
+  skipBinary?: boolean;
+  forceUtf8?: boolean;
   showRedacted: boolean;
+  // New options
+  autoDetect: boolean;
+  scanAll: boolean;
+  infrastructure: boolean;
+  // Format options
+  format?: string;
+  // Mode setting (auto, code, infra, doc)
+  mode?: string;
+  // Security level (auto, strict, none)
+  security?: string;
+  // Simplified config options
+  save?: string;
+  load?: string;
+  list?: boolean;
 }
 
 // Default file patterns
@@ -76,7 +90,7 @@ export interface RedactedCredential {
 export interface RedactResult {
   content: string;
   credentialsFound: boolean;
-  redactedCredentials: RedactedCredential[]; // Add this
+  redactedCredentials: RedactedCredential[];
 }
 
 // File with score for prioritization
@@ -114,4 +128,13 @@ export interface FileTypeInfo {
   isPriority: boolean;
   isEntry: boolean;
   estimatedTokens: number;
+}
+
+// Infrastructure detection result
+export interface InfrastructureDetection {
+  isTerraform: boolean;
+  isKubernetes: boolean;
+  isAnsible: boolean;
+  isDocker: boolean;
+  isPacker: boolean;
 }

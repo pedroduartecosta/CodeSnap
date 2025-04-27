@@ -16,6 +16,7 @@ import {
   ScoredFile,
   FileTypeInfo,
   ProjectStats,
+  InfrastructureDetection,
 } from "../types";
 
 import {
@@ -27,6 +28,8 @@ import {
   DEFAULT_INCLUDE_EXTS,
   DEFAULT_INCLUDE_FILES,
   DEFAULT_EXCLUDE_FILES,
+  EXPANDED_CODE_EXTENSIONS,
+  NO_EXTENSION_IMPORTANT_FILES,
 } from "./constants";
 
 /**
@@ -37,6 +40,107 @@ import {
 export function isLikelyBinaryFile(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
   return BINARY_EXTENSIONS.includes(ext);
+}
+
+/**
+ * Auto-detect code files based on content and naming patterns
+ * @param filePath File path to check
+ * @param content File content (if available)
+ * @returns Boolean indicating if file appears to be code
+ */
+export function isLikelyCodeFile(filePath: string, content?: string): boolean {
+  const basename = path.basename(filePath);
+  const ext = path.extname(filePath).toLowerCase();
+
+  // Check for known code file extensions (already covered by DEFAULT_INCLUDE_EXTS)
+
+  // Check for common config file patterns regardless of extension
+  if (
+    basename.includes("config") ||
+    basename.includes("conf") ||
+    basename.endsWith(".yaml") ||
+    basename.endsWith(".yml") ||
+    basename.endsWith(".json") ||
+    basename.endsWith(".tf") || // Terraform
+    basename.endsWith(".tfvars") || // Terraform variables
+    basename.endsWith(".hcl") || // HashiCorp Configuration Language
+    basename.endsWith(".toml") ||
+    basename.endsWith(".ini") ||
+    basename.endsWith(".env") ||
+    basename === "Dockerfile" ||
+    basename === "Makefile" ||
+    basename === "docker-compose.yml" ||
+    basename === "docker-compose.yaml" ||
+    basename.endsWith(".tpl") || // Template files
+    basename.endsWith(".tmpl") ||
+    basename.endsWith(".j2") || // Jinja2 templates
+    basename.endsWith(".template")
+  ) {
+    return true;
+  }
+
+  // If we have content, do basic heuristic checks for code-like patterns
+  if (content) {
+    // Check for common programming constructs
+    const codePatterns = [
+      /function\s+\w+\s*\(/, // function declarations
+      /class\s+\w+/, // class declarations
+      /def\s+\w+\s*\(/, // Python functions
+      /^\s*import\s+/m, // import statements
+      /^\s*from\s+.+\s+import/m, // Python imports
+      /^\s*require\(/m, // Node.js requires
+      /^\s*\w+\s*=\s*require\(/m, // Node.js variable requires
+      /^\s*module\s+\"/m, // Terraform modules
+      /^\s*resource\s+\"/m, // Terraform resources
+      /^\s*provider\s+\"/m, // Terraform providers
+      /^\s*variable\s+\"/m, // Terraform variables
+      /^\s*output\s+\"/m, // Terraform outputs
+      /^\s*apiVersion:/m, // Kubernetes manifests
+      /^\s*kind:/m, // Kubernetes manifests
+      /^\s*metadata:/m, // Kubernetes manifests
+      /^\s*spec:/m, // Kubernetes manifests
+    ];
+
+    for (const pattern of codePatterns) {
+      if (pattern.test(content)) {
+        return true;
+      }
+    }
+  }
+
+  // For extensions we don't recognize but might be code
+  if (ext && ext.length > 1 && !isLikelyBinaryFile(filePath)) {
+    // Check if it looks like a reasonable extension (2-4 chars)
+    if (ext.length >= 2 && ext.length <= 5) {
+      // Peek at the first few bytes of the file to see if it's text-like
+      try {
+        if (!content) {
+          const sample = fs
+            .readFileSync(filePath, { encoding: "utf8", flag: "r" })
+            .slice(0, 500);
+          // If it contains mostly printable characters, it's likely text/code
+          const printableRatio =
+            sample.replace(/[^\x20-\x7E]/g, "").length / sample.length;
+          if (printableRatio > 0.9) {
+            return true;
+          }
+        } else {
+          // Use the content we already have
+          const sample = content.slice(0, 500);
+          const printableRatio =
+            sample.replace(/[^\x20-\x7E]/g, "").length / sample.length;
+          if (printableRatio > 0.9) {
+            return true;
+          }
+        }
+      } catch (error) {
+        // If we can't read the file, assume it's not code
+        return false;
+      }
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -85,6 +189,188 @@ export function getFileTypeInfo(
     isEntry,
     estimatedTokens,
   };
+}
+
+/**
+ * Detect if a project is likely an infrastructure-as-code project
+ * @param rootDir Root directory of the project
+ * @returns Object with detected infrastructure types
+ */
+export function detectInfrastructureProject(
+  rootDir: string
+): InfrastructureDetection {
+  const result = {
+    isTerraform: false,
+    isKubernetes: false,
+    isAnsible: false,
+    isDocker: false,
+    isPacker: false,
+  };
+
+  try {
+    // Check for Terraform files
+    if (
+      glob.sync("**/*.tf", { cwd: rootDir }).length > 0 ||
+      glob.sync("**/*.tfvars", { cwd: rootDir }).length > 0
+    ) {
+      result.isTerraform = true;
+    }
+
+    // Check for Kubernetes manifests
+    const k8sPatterns = [
+      "**/deployment.yaml",
+      "**/service.yaml",
+      "**/ingress.yaml",
+      "**/configmap.yaml",
+      "**/secret.yaml",
+      "**/Chart.yaml", // Helm charts
+      "**/*.helmignore",
+    ];
+
+    for (const pattern of k8sPatterns) {
+      if (glob.sync(pattern, { cwd: rootDir }).length > 0) {
+        result.isKubernetes = true;
+        break;
+      }
+    }
+
+    // Check for Ansible files
+    if (
+      glob.sync("**/playbook.yml", { cwd: rootDir }).length > 0 ||
+      glob.sync("**/ansible.cfg", { cwd: rootDir }).length > 0 ||
+      glob.sync("**/inventory", { cwd: rootDir }).length > 0
+    ) {
+      result.isAnsible = true;
+    }
+
+    // Check for Docker files
+    if (
+      glob.sync("**/Dockerfile", { cwd: rootDir }).length > 0 ||
+      glob.sync("**/docker-compose.yml", { cwd: rootDir }).length > 0 ||
+      glob.sync("**/docker-compose.yaml", { cwd: rootDir }).length > 0
+    ) {
+      result.isDocker = true;
+    }
+
+    // Check for Packer files
+    if (
+      glob.sync("**/*.pkr.hcl", { cwd: rootDir }).length > 0 ||
+      glob
+        .sync("**/*.json", {
+          cwd: rootDir,
+          ignore: ["**/package.json", "**/package-lock.json"],
+        })
+        .some((file) => {
+          try {
+            const content = fs.readFileSync(path.join(rootDir, file), "utf8");
+            return (
+              content.includes('"builders"') &&
+              content.includes('"provisioners"')
+            );
+          } catch {
+            return false;
+          }
+        })
+    ) {
+      result.isPacker = true;
+    }
+
+    return result;
+  } catch (error) {
+    // In case of any error, return the default result
+    return result;
+  }
+}
+
+/**
+ * Adjust file priorities based on detected project type
+ * @param options Program options
+ * @param rootDir Root directory
+ */
+export function adjustPrioritiesForProjectType(
+  options: ProgramOptions,
+  rootDir: string
+): void {
+  if (options.infrastructure || options.mode === "infra") {
+    // Explicitly set to prioritize infrastructure code
+    options.extensions = [
+      ...(options.extensions || []),
+      ".tf",
+      ".tfvars",
+      ".hcl",
+      ".yaml",
+      ".yml",
+      ".json",
+      ".tpl",
+      ".j2",
+      "Dockerfile",
+    ];
+    return;
+  }
+
+  // Auto-detect project type if auto-detect is enabled
+  if (options.autoDetect) {
+    const infraDetection = detectInfrastructureProject(rootDir);
+
+    // If this is an infrastructure project, adjust priorities
+    if (
+      infraDetection.isTerraform ||
+      infraDetection.isKubernetes ||
+      infraDetection.isAnsible ||
+      infraDetection.isDocker ||
+      infraDetection.isPacker
+    ) {
+      console.log(
+        chalk.blue(
+          "Detected infrastructure-as-code project. Adjusting file priorities..."
+        )
+      );
+
+      // Add relevant extensions to the list
+      if (!options.extensions) {
+        options.extensions = [...DEFAULT_INCLUDE_EXTS];
+      }
+
+      if (infraDetection.isTerraform) {
+        console.log(chalk.blue("- Terraform project detected"));
+        options.extensions.push(".tf", ".tfvars", ".hcl");
+      }
+
+      if (infraDetection.isKubernetes) {
+        console.log(chalk.blue("- Kubernetes manifests detected"));
+        // Ensure yaml is included
+        if (
+          !options.extensions.includes(".yaml") &&
+          !options.extensions.includes(".yml")
+        ) {
+          options.extensions.push(".yaml", ".yml");
+        }
+      }
+
+      if (infraDetection.isAnsible) {
+        console.log(chalk.blue("- Ansible project detected"));
+        if (!options.extensions.includes(".yml")) {
+          options.extensions.push(".yml");
+        }
+      }
+
+      if (infraDetection.isDocker) {
+        console.log(chalk.blue("- Docker configuration detected"));
+        // Ensure Dockerfile and compose files are included
+        options.files = [
+          ...(options.files || []),
+          "Dockerfile",
+          "docker-compose.yml",
+          "docker-compose.yaml",
+        ];
+      }
+
+      if (infraDetection.isPacker) {
+        console.log(chalk.blue("- Packer template detected"));
+        options.extensions.push(".pkr.hcl");
+      }
+    }
+  }
 }
 
 /**
@@ -158,8 +444,16 @@ export async function findFiles(
     }
 
     // Create sets for faster lookups
-    const extensionsSet = new Set(extensions);
-    const includeFilesSet = new Set(includeFiles);
+    const extensionsSet = new Set(
+      options.extensions || [
+        ...defaults.DEFAULT_INCLUDE_EXTS,
+        ...EXPANDED_CODE_EXTENSIONS,
+      ]
+    );
+    const includeFilesSet = new Set([
+      ...includeFiles,
+      ...NO_EXTENSION_IMPORTANT_FILES,
+    ]);
     const excludeFilesSet = new Set(excludeFiles);
 
     // Filter files based on extensions, include files, and exclude files
@@ -205,6 +499,13 @@ export async function findFiles(
           return true;
         }
 
+        // Check for special files without extensions
+        if (
+          NO_EXTENSION_IMPORTANT_FILES.some((name) => basename.includes(name))
+        ) {
+          return true;
+        }
+
         // Check for priority files and special patterns
         for (const pattern of HIGH_PRIORITY_FILES) {
           if (minimatch(basename, pattern)) {
@@ -247,6 +548,32 @@ export async function findFiles(
           }
 
           return true;
+        }
+
+        // As a fallback, do a quick content check to see if this looks like code
+        // Only do this for a reasonable number of files to avoid performance issues
+        if (
+          (options.scanAll || filteredFiles.length < 100) &&
+          !isLikelyBinaryFile(file)
+        ) {
+          try {
+            const fullPath = path.join(rootDir, file);
+            const stats = fs.statSync(fullPath);
+
+            // Skip very large files for content-based detection
+            if (stats.size > 100 * 1024) {
+              // 100 KB
+              return false;
+            }
+
+            // Get a sample of the file content
+            const content = fs
+              .readFileSync(fullPath, { encoding: "utf8", flag: "r" })
+              .slice(0, 500);
+            return isLikelyCodeFile(file, content);
+          } catch (e) {
+            return false;
+          }
         }
 
         return false;
@@ -515,6 +842,10 @@ export function prioritizeFiles(
       ".go": 20, // Go
       ".java": 20, // Java
       ".rb": 20, // Ruby
+      ".tf": 30, // Terraform
+      ".tfvars": 25, // Terraform variables
+      ".hcl": 25, // HCL files
+      ".tpl": 20, // Template files
     };
 
     if (importantExtensions[ext]) {
@@ -582,6 +913,30 @@ export function prioritizeFiles(
         }
       } catch (e) {
         // Ignore errors
+      }
+    }
+
+    // Special handling for infrastructure files if this mode is enabled
+    if (options.mode === "infra" || options.infrastructure) {
+      if (ext === ".tf" || ext === ".tfvars" || ext === ".hcl") {
+        score += 100; // Boost Terraform files
+      } else if (ext === ".yaml" || ext === ".yml") {
+        // Check for Kubernetes patterns
+        if (
+          content.includes("apiVersion:") ||
+          content.includes("kind:") ||
+          content.includes("metadata:") ||
+          content.includes("spec:")
+        ) {
+          score += 80; // Boost K8s manifests
+        }
+      } else if (
+        basename === "Dockerfile" ||
+        basename.includes("docker-compose")
+      ) {
+        score += 70; // Boost Docker files
+      } else if (ext === ".tpl" || ext === ".tmpl" || ext === ".j2") {
+        score += 60; // Boost templates often used with infrastructure
       }
     }
 

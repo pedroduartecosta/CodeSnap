@@ -16,6 +16,7 @@ import {
   safeReadFile,
   shouldSkipFile,
   categorizeFilesByDirectory,
+  adjustPrioritiesForProjectType,
 } from "./utils/file-utils";
 
 import { formatOutput, formatFileContent } from "./utils/formatter";
@@ -55,112 +56,148 @@ function setupProgram(): ProgramOptions {
     .description("Intelligently collect code from your project for LLM context")
     .version("0.1.1")
     .option("-d, --directory <dir>", "Root directory to scan", process.cwd())
+
+    // Core functionality options
+    .option(
+      "-e, --extensions <ext...>",
+      "File extensions to include (auto-detected by default)"
+    )
     .option("-i, --ignore <patterns...>", "Additional patterns to ignore")
-    .option("-e, --extensions <extensions...>", "File extensions to include")
     .option("-f, --files <files...>", "Specific files to include")
     .option("-x, --exclude <files...>", "Specific files to exclude")
-    .option("-l, --limit <size>", "Size limit in KB (default: 50KB)", "50")
+
+    // Size control options (consolidated)
+    .option("-l, --limit <kb>", "Size limit in KB (default: 50KB)", "50")
     .option(
       "-t, --tokens <num>",
       "Approximate token limit (default: 100000)",
       "100000"
     )
-    .option("--no-copy", "Don't copy to clipboard, print to stdout instead")
+    .option("--max-file-size <kb>", "Max size for a single file in KB", "500")
+
+    // Mode options (simplified)
+    .option(
+      "--mode <type>",
+      "Project type optimization: 'auto', 'code', 'infra', 'doc'",
+      "auto"
+    )
+    .option("--interactive", "Select files interactively")
     .option("--tree", "Include file tree in the output")
-    .option(
-      "--list-only",
-      "Only list files that would be included without content"
-    )
-    .option("--respect-gitignore", "Respect .gitignore rules", true)
+    .option("--list", "Only list files that would be included without content")
     .option("--dry-run", "Show what would be copied without copying")
-    .option("--summary", "Show only summary without copying")
-    .option("--interactive", "Interactive mode to select files")
-    .option("--smart", "Smart mode to prioritize important files", true)
+    .option("--recent <days>", "Only include files modified in the last N days")
+
+    // Output options
+    .option("--no-copy", "Don't copy to clipboard, print to stdout instead")
     .option(
-      "--strip-comments",
-      "Strip comments from code to reduce token usage",
-      true
+      "--format <format>",
+      "Output format: 'md' (default), 'json', 'plain'",
+      "md"
     )
+
+    // Security option (simplified)
     .option(
-      "--recent <days>",
-      "Only include files modified in the last N days",
-      "0"
+      "--security <level>",
+      "Security level: 'auto' (default), 'strict', 'none'",
+      "auto"
     )
-    .option(
-      "--max-file-size <size>",
-      "Maximum size for a single file in KB",
-      (FILE_SIZE_LIMITS.MAX_INDIVIDUAL_FILE_SIZE / 1024).toString()
-    )
-    .option(
-      "--truncate-large-files",
-      "Truncate files larger than max-file-size instead of skipping"
-    )
-    .option("--save-config <name>", "Save current configuration as a profile")
-    .option("--load-config <name>", "Load a saved configuration profile")
-    .option(
-      "--optimize-tokens",
-      "Optimize token usage (strips comments, trims whitespace)",
-      true
-    )
-    .option(
-      "--summarize-large-files",
-      "Include auto-generated summaries of large files",
-      true
-    )
-    .option(
-      "--llm <name>",
-      "Optimize output for specific LLM (gpt-4, claude, etc.)",
-      "gpt-4"
-    )
-    .option(
-      "--redact-credentials",
-      "Automatically redact API keys and credentials (default)",
-      true
-    )
-    .option(
-      "--no-redact-credentials",
-      "Don't redact credentials (use with caution)"
-    )
-    .option(
-      "--show-redacted",
-      "Show information about redacted credentials in the output"
-    )
-    .option("--verbose", "Show more detailed output")
-    .option(
-      "--max-files <num>",
-      "Maximum number of files to include",
-      FILE_SIZE_LIMITS.MAX_TOTAL_FILES.toString()
-    )
-    .option("--skip-binary", "Skip binary files", true)
-    .option(
-      "--force-utf8",
-      "Force UTF-8 encoding and skip invalid files",
-      true
-    );
+
+    // Configuration
+    .option("--save <name>", "Save current configuration as a profile")
+    .option("--load <name>", "Load a saved configuration profile")
+
+    // Simplified flags
+    .option("-v, --verbose", "Show more detailed output");
 
   program.parse(process.argv);
-  return program.opts() as ProgramOptions;
+  return processCommandLineOptions(program.opts() as ProgramOptions);
 }
 
 /**
- * Process the options, setting derived options from base values
- * @param options Raw program options
- * @returns Processed options with derived values
+ * Process command line options and expand simplified options into internal options
  */
-function processOptions(options: ProgramOptions): ProgramOptions {
+function processCommandLineOptions(opts: any): ProgramOptions {
+  const options: ProgramOptions = {
+    ...opts,
+    // Set default values for required properties
+    directory: opts.directory || process.cwd(),
+    limit: opts.limit || "50",
+    tokens: opts.tokens || "100000",
+    copy: opts.copy !== false, // Default to true unless explicitly set to false
+  };
+
   // Convert KB to bytes
   options.limitBytes = parseInt(options.limit) * 1024;
-  options.tokenLimitChars = Math.floor(parseInt(options.tokens) * 4); // Rough char approximation
-  options.maxFileSizeBytes =
-    parseInt(
-      options.maxFileSize ||
-        (FILE_SIZE_LIMITS.MAX_INDIVIDUAL_FILE_SIZE / 1024).toString()
-    ) * 1024;
-  options.maxFiles = parseInt(
-    (typeof options.maxFiles === "number"
-      ? options.maxFiles.toString()
-      : options.maxFiles) || FILE_SIZE_LIMITS.MAX_TOTAL_FILES.toString()
-  );
+  options.tokenLimitChars = Math.floor(parseInt(options.tokens) * 4);
+  options.maxFileSizeBytes = parseInt(options.maxFileSize || "500") * 1024;
+
+  // Set options based on mode
+  switch (opts.mode) {
+    case "infra":
+      options.infrastructure = true;
+      options.autoDetect = true;
+      options.optimizeTokens = true;
+      options.redactCredentials = true;
+      break;
+    case "doc":
+      options.stripComments = false;
+      options.summarizeLargeFiles = false;
+      break;
+    case "code":
+      options.stripComments = true;
+      options.summarizeLargeFiles = true;
+      options.optimizeTokens = true;
+      break;
+    case "auto":
+    default:
+      options.autoDetect = true;
+      options.smart = true;
+      options.optimizeTokens = true;
+      options.summarizeLargeFiles = true;
+      break;
+  }
+
+  // Set security options based on security level
+  switch (opts.security) {
+    case "strict":
+      options.redactCredentials = true;
+      options.showRedacted = true;
+      options.respectGitignore = true;
+      break;
+    case "none":
+      options.redactCredentials = false;
+      options.showRedacted = false;
+      break;
+    case "auto":
+    default:
+      options.redactCredentials = true;
+      options.showRedacted = false;
+      options.respectGitignore = true;
+      break;
+  }
+
+  // Set other derived options
+  options.listOnly = !!opts.list;
+  options.saveConfig = opts.save;
+  options.loadConfig = opts.load;
+  options.skipBinary = true;
+  options.forceUtf8 = true;
+
+  // Add appropriate extensions based on mode
+  if (opts.mode === "infra" && !opts.extensions) {
+    options.extensions = [
+      ".tf",
+      ".tfvars",
+      ".hcl",
+      ".yaml",
+      ".yml",
+      ".json",
+      ".tpl",
+      ".tmpl",
+      ".j2",
+      "Dockerfile",
+    ];
+  }
 
   return options;
 }
@@ -230,7 +267,43 @@ async function main(): Promise<void> {
   }
 
   // Process and set derived options
-  options = processOptions(options);
+  options = processCommandLineOptions(options);
+
+  // Detect project type and adjust file priorities if needed
+  adjustPrioritiesForProjectType(options, options.directory);
+
+  // If we're in a Terraform directory, make sure we include all .tf files
+  if (
+    fs.existsSync(path.join(options.directory, "main.tf")) ||
+    fs.existsSync(path.join(options.directory, "providers.tf"))
+  ) {
+    console.log(chalk.blue("Terraform project detected in this directory"));
+
+    if (!options.extensions) {
+      options.extensions = [...DEFAULT_INCLUDE_EXTS];
+    }
+
+    // Ensure Terraform extensions are included
+    if (!options.extensions.includes(".tf")) {
+      options.extensions.push(".tf");
+    }
+    if (!options.extensions.includes(".tfvars")) {
+      options.extensions.push(".tfvars");
+    }
+
+    // Include template files
+    if (!options.extensions.includes(".tpl")) {
+      options.extensions.push(".tpl");
+    }
+  }
+
+  // Log the extensions we're using if verbose
+  if (options.verbose) {
+    console.log(
+      chalk.cyan("File extensions being searched:"),
+      options.extensions ? options.extensions.join(", ") : "Default extensions"
+    );
+  }
 
   // Define default patterns
   const defaultPatterns: DefaultPatterns = {
@@ -346,7 +419,7 @@ async function main(): Promise<void> {
       // For otherwise equal priority, sort by size
       return sizeA - sizeB;
     })
-    .slice(0, options.maxFiles);
+    .slice(0, options.maxFiles || FILE_SIZE_LIMITS.MAX_TOTAL_FILES);
 
   // Second pass: Read actual file contents for the filtered set
   let totalSize = 0;

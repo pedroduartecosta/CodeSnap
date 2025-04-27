@@ -79,6 +79,50 @@ export const CODE_CATEGORIES = {
 };
 
 /**
+ * Expanded code file categories to include more types
+ */
+export const EXPANDED_CODE_CATEGORIES = {
+  INFRASTRUCTURE: [
+    ".tf", // Terraform
+    ".tfvars", // Terraform variables
+    ".hcl", // HashiCorp Configuration Language
+    ".nomad", // Nomad job files
+    ".pkr.hcl", // Packer template
+  ],
+  CONTAINER: [
+    "Dockerfile",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    ".dockerignore",
+  ],
+  KUBERNETES: [
+    ".yaml", // Common for K8s manifests
+    ".yml", // Alternative YAML extension
+    ".helmignore",
+    "Chart.yaml",
+    "values.yaml",
+  ],
+  TEMPLATES: [
+    ".tpl", // Generic template
+    ".tmpl", // Template
+    ".j2", // Jinja2 template
+    ".template", // Template
+    ".gotmpl", // Go template
+    ".erb", // Ruby template
+  ],
+  CONFIGS: [
+    ".conf", // Config file
+    ".config", // Config file
+    ".properties", // Java properties
+    ".ini", // INI config
+    ".env", // Environment variables
+    ".env.example",
+    ".env.sample",
+    ".toml", // TOML config (also used by Rust)
+  ],
+};
+
+/**
  * Configuration file categories
  */
 export const CONFIG_FILE_CATEGORIES = {
@@ -138,6 +182,23 @@ export const CONFIG_FILE_CATEGORIES = {
     "astro.config.mjs",
     "tailwind.config.js",
     "postcss.config.js",
+  ],
+  INFRASTRUCTURE: [
+    "main.tf",
+    "variables.tf",
+    "outputs.tf",
+    "providers.tf",
+    "backend.tf",
+    "versions.tf",
+    "terraform.tfvars",
+    "Chart.yaml",
+    "values.yaml",
+    "kustomization.yaml",
+    "serverless.yml",
+    "cloudformation.yaml",
+    "ansible.cfg",
+    "playbook.yml",
+    "inventory",
   ],
 };
 
@@ -222,6 +283,18 @@ export const CODE_EXTENSIONS: string[] = [
 ];
 
 /**
+ * All code files including expanded categories
+ */
+export const EXPANDED_CODE_EXTENSIONS = [
+  ...CODE_EXTENSIONS,
+  ...EXPANDED_CODE_CATEGORIES.INFRASTRUCTURE,
+  ...EXPANDED_CODE_CATEGORIES.CONTAINER,
+  ...EXPANDED_CODE_CATEGORIES.KUBERNETES,
+  ...EXPANDED_CODE_CATEGORIES.TEMPLATES,
+  ...EXPANDED_CODE_CATEGORIES.CONFIGS,
+];
+
+/**
  * Files to exclude even if they match other patterns
  */
 export const DEFAULT_EXCLUDE_FILES: string[] = [
@@ -260,6 +333,7 @@ export const HIGH_PRIORITY_FILES: string[] = [
   ...CONFIG_FILE_CATEGORIES.PROJECT_INFO,
   ...CONFIG_FILE_CATEGORIES.VERSION_CONTROL,
   ...CONFIG_FILE_CATEGORIES.LANGUAGE_SPECIFIC,
+  ...CONFIG_FILE_CATEGORIES.INFRASTRUCTURE,
 ];
 
 /**
@@ -299,6 +373,23 @@ export const IMPORTANT_FOLDERS: string[] = [
 ];
 
 /**
+ * These files should be recognized even without extensions
+ */
+export const NO_EXTENSION_IMPORTANT_FILES = [
+  "Dockerfile",
+  "Makefile",
+  "Jenkinsfile",
+  "docker-compose",
+  "docker-compose.override",
+  ".gitignore",
+  ".editorconfig",
+  "Vagrantfile",
+  "Brewfile",
+  "Procfile",
+  "nginx.conf",
+];
+
+/**
  * Size limits and thresholds
  */
 export const FILE_SIZE_LIMITS = {
@@ -306,13 +397,13 @@ export const FILE_SIZE_LIMITS = {
   MAX_INDIVIDUAL_FILE_SIZE: 500 * 1024,
 
   // Maximum number of files to include
-  MAX_TOTAL_FILES: 100,
+  MAX_TOTAL_FILES: 1000000,
 
   // Threshold for preferring smaller files (50KB)
   SMALL_FILE_PREFERENCE_THRESHOLD: 50 * 1024,
 
   // Default token limit
-  DEFAULT_TOKEN_LIMIT: 100000, // 100K tokens
+  DEFAULT_TOKEN_LIMIT: 100000,
 
   // Default size limit in KB
   DEFAULT_SIZE_LIMIT_KB: 50,
@@ -322,7 +413,7 @@ export const FILE_SIZE_LIMITS = {
  * Backward compatibility exports for constants that were previously separate
  */
 export const DEFAULT_EXCLUDE_EXTS = BINARY_EXTENSIONS;
-export const DEFAULT_INCLUDE_EXTS = CODE_EXTENSIONS;
+export const DEFAULT_INCLUDE_EXTS = EXPANDED_CODE_EXTENSIONS;
 export const DEFAULT_INCLUDE_FILES = [
   ...CONFIG_FILE_CATEGORIES.PACKAGE_MANAGERS,
   ...CONFIG_FILE_CATEGORIES.BUILD_CONFIG,
@@ -330,6 +421,8 @@ export const DEFAULT_INCLUDE_FILES = [
   ...CONFIG_FILE_CATEGORIES.PROJECT_INFO,
   ...CONFIG_FILE_CATEGORIES.VERSION_CONTROL,
   ...CONFIG_FILE_CATEGORIES.ENTRY_POINTS,
+  ...CONFIG_FILE_CATEGORIES.INFRASTRUCTURE,
+  ...NO_EXTENSION_IMPORTANT_FILES,
 ];
 
 export const MAX_INDIVIDUAL_FILE_SIZE =
